@@ -101,3 +101,25 @@ Settings toggle in PreferenceScreen.MISC. No new manifest activity (root-install
 - ie.m/ie.n fingerprints not yet written/tested (structural match confirmed feasible).
 - Register-safe insertion at index 0 confirmed free regs (v0-5 for m, v0-8 for n).
 - GitHub Packages auth may block build.
+
+## REPO STRUCTURE (UPDATED — development now lives here)
+Our own git repo: `/Users/yogesh/Desktop/Wraped/wrapped-patch/` (git-tracked, clean).
+```
+wrapped-patch/
+├── .gitignore                  # excludes *.apk, decompiled/, *.dump, build/, .DS_Store
+├── STATUS.md                   # this file (resume point)
+├── FINDINGS.md                 # full verified RE findings
+├── patches/src/main/kotlin/app/revanced/patches/music/stats/
+│   ├── Fingerprints.kt         # DONE (locates ie.m / ie.n via setMetadata/setPlaybackState)
+│   └── ListeningLoggerPatch.kt # TODO (inject smali hooks + settings toggle)
+├── extensions/music/src/main/java/app/revanced/extension/music/stats/
+│   ├── ListeningDatabase.java  # DONE (sqlite: tracks, sessions, report queries)
+│   └── SessionTracker.java     # DONE (onTrackInfo / onPlaybackState entry points)
+└── addresources/values/strings.xml  # TODO (revanced_music_listening_stats strings)
+```
+To BUILD: copy these files into the upstream harness
+`/Users/yogesh/Desktop/Wraped/revanced-patches/` (same relative paths) then
+`cd revanced-patches && ./gradlew`. The upstream clone is NOT our repo (untouched).
+NOTE: a STOCK YT Music 8.40.54 APK is now present in /Users/yogesh/Desktop/Wraped/
+(`com.google.android.apps.youtube.music_8.40.54-...apkmirror.com.apk`) — needed for
+patch testing (step 5 of NEXT STEPS). Also present: the PATCHED build (YT Music ReVanced.apk).

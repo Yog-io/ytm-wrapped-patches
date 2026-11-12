@@ -1,5 +1,6 @@
 package app.revanced.extension.music.stats;
 
+import app.revanced.extension.music.settings.Settings;
 import app.revanced.extension.shared.Utils;
 
 /**
@@ -37,6 +38,8 @@ public final class SessionTracker {
      * smali extracts TITLE, ARTIST, DURATION from the metadata Bundle.
      */
     public static void onTrackInfo(CharSequence title, CharSequence artist, long durationMs) {
+        if (!Settings.LISTENING_STATS.get()) return;
+
         final String t = title == null ? "" : title.toString().trim();
         final String a = artist == null ? "" : artist.toString().trim();
         if (t.isEmpty() && a.isEmpty()) return; // ignore empty/clear metadata
@@ -70,6 +73,8 @@ public final class SessionTracker {
      * and on every state change. smali extracts position (long) and state (int).
      */
     public static void onPlaybackState(long positionMs, int state) {
+        if (!Settings.LISTENING_STATS.get()) return;
+
         Utils.runOnBackgroundThread(() -> {
             synchronized (lock) {
                 if (currentSessionId < 0) return; // no track yet
