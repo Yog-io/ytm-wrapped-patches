@@ -123,3 +123,35 @@ To BUILD: copy these files into the upstream harness
 NOTE: a STOCK YT Music 8.40.54 APK is now present in /Users/yogesh/Desktop/Wraped/
 (`com.google.android.apps.youtube.music_8.40.54-...apkmirror.com.apk`) — needed for
 patch testing (step 5 of NEXT STEPS). Also present: the PATCHED build (YT Music ReVanced.apk).
+
+## SESSION 3 — PATCH BUILT AND VERIFIED (Nov 12)
+Repo is now a full standalone fork of revanced-patches (upstream harness copied in,
+rsync'd with --exclude .git/.idea/build; note: --exclude 'build/' also hit the source
+dir patches/.../all/misc/build/ — copied back manually. local.properties (sdk.dir,
+git-ignored) added. Build needs JDK 21: JAVA_HOME=/opt/homebrew/opt/openjdk@21/...
+GitHub token stored in ~/.gradle/gradle.properties (githubPackagesUsername/Password).
+
+BUILD: `./gradlew build` -> `patches/build/libs/patches-6.1.0.rvp` ✓
+CLI: revanced-cli-6.0.0-all.jar (in /Users/yogesh/Desktop/Wraped/); command:
+  java -jar cli patch -p patches-6.1.0.rvp -b -o out.apk stock.apk
+Test result: "Listening stats logger" succeeded, APK saved, full default patch set OK.
+
+VERIFIED IN PATCHED APK (dexdump of patched classes2.dex):
+- ie.m: guard if-eqz v7 @0000, Bundle field resolved to MediaMetadataCompat.b,
+  TITLE/ARTIST/DURATION extracted via framework getCharSequence/getLong,
+  invoke-static onTrackInfo(CharSequence,CharSequence,J) @0018, falls through to
+  original iput-object @001b. Labels/registers clean.
+- ie.n: guard if-eqz v10 @0000, state field .a:I, position field .b:J (both resolved
+  by setState operand walk), invoke-static onPlaybackState(JI) @0006, falls through.
+- Other patches intact: PermanentRepeat/HideVideoAds/Spoof/GmsCore classes present.
+- Settings UI: revanced_music_listening_stats_title/_summary_on/_summary_off in resources.arsc.
+- Settings.java: LISTENING_STATS BooleanSetting added (default ON, no reboot needed);
+  SessionTracker gates both hooks on it.
+
+## NEXT STEPS
+1. Install /tmp/ytm-wrapped-test.apk on device (copy to phone, sideload); play music;
+   verify DB created: app data has revanced_listening.db with tracks/sessions rows
+   (adb: run-as not available for non-root — use the Export internal data patch or
+   app inspector). Confirm no crash on launch/playback.
+2. Wrapper report generator/UI (WrapperReport.java queries exist in ListeningDatabase).
+3. Optional later: videoId hook (aztd.ic/bi), queue hook (ie.q), network source class.
