@@ -155,3 +155,37 @@ VERIFIED IN PATCHED APK (dexdump of patched classes2.dex):
    app inspector). Confirm no crash on launch/playback.
 2. Wrapper report generator/UI (WrapperReport.java queries exist in ListeningDatabase).
 3. Optional later: videoId hook (aztd.ic/bi), queue hook (ie.q), network source class.
+
+## SESSION 4 — EMULATOR VALIDATION COMPLETE (Nov 12)
+ENV FIXES (emulator was the blocker, not the patch):
+- Stock YT Music (5.54.52, old cert f205d007) preinstalled on the AOSP image breaks
+  GmsCore spoofing: spoof resolves to com.google.android.apps.youtube.music, sees the
+  installed stock app, cert mismatch vs KnownGooglePackages (afb0fed5) -> AccountContentProvider
+  denies "missing google package permission or GET_ACCOUNTS". FIX: pm uninstall --user 0
+  com.google.android.apps.youtube.music.
+- ReVanced "Action needed" battery dialog: bypass with dumpsys deviceidle whitelist +app.revanced.android.gms.
+- Emulator MUST be launched WITH audio (no -no-audio): playback freezes otherwise.
+- Differential test (user's known-good APK on emulator) failed identically -> proved env, not patch.
+
+REAL BUGS FOUND + FIXED (extensions/music/stats):
+1. Music sends ie.m metadata TWICE (first without artist). Old code forked a new track row +
+   session. FIX: same-title calls with a newly-arrived artist now enrich the existing row
+   (ListeningDatabase.updateTrackArtist) and keep the session.
+2. FINDINGS assumption wrong: Music calls setPlaybackState ONLY on transitions, never
+   periodically while playing. Ticks only happen during load/buffer. FIX: 10s self-rescheduling
+   flush timer (Handler, main thread -> background DB write) while playing; pending wall time
+   committed in endCurrentSessionLocked (track change mid-song).
+
+VALIDATED ON EMULATOR (build test3):
+- T+35s=31.3s, T+65s=61.3s, T+95s=91.4s listened -> accurate wall-clock tracking.
+- Pause commits final slice; stable after (no growth while paused).
+- Track change: session closed with end_ms, play_count=1, total_listened_ms=107265 rolled up.
+- Single track row w/ artist; second track + open session recording.
+
+PUBLISHED: github.com/Yog-io/ytm-wrapped-patches (repo + release v6.1.0 + patches.json,
+Manager JsonSource ReVancedAsset schema verified from Manager source).
+
+## NEXT
+- Manager 2.6.0 flow on emulator: add source (raw patches.json URL) or local-import the rvp,
+  patch stock APK in-Manager, install, verify same behavior (covers split installs too).
+- Then Wrapped report UI.

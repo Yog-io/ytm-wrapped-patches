@@ -72,6 +72,17 @@ public final class ListeningDatabase {
     }
 
     /**
+     * Update the artist of an existing track row (metadata arrives in two passes;
+     * the first one has an empty artist).
+     */
+    public void updateTrackArtist(long trackId, String artist) {
+        if (artist == null || artist.isEmpty()) return;
+        ContentValues cv = new ContentValues();
+        cv.put("artist", artist);
+        db().update("tracks", cv, "id = ?", new String[]{String.valueOf(trackId)});
+    }
+
+    /**
      * Open a new listen session for a track. Returns the new session id.
      */
     public long startSession(long trackId, long startMs) {

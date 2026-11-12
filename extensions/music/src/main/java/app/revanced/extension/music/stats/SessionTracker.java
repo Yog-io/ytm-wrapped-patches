@@ -20,6 +20,13 @@ public final class SessionTracker {
 
     private static final Object lock = new Object();
 
+    // ReVanced note: Music only calls setPlaybackState on state transitions — there are
+    // NO periodic ticks while steadily playing. While playing, a self-rescheduling
+    // flush timer commits wall-clock listened time every FLUSH_INTERVAL_MS.
+    private static final long FLUSH_INTERVAL_MS = 10_000;
+    private static final android.os.Handler flushHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+
     // Current session (guarded by lock).
     private static String currentTitle;
     private static String currentArtist;
@@ -46,7 +53,16 @@ public final class SessionTracker {
 
         Utils.runOnBackgroundThread(() -> {
             synchronized (lock) {
-                boolean trackChanged = !t.equals(currentTitle) || !a.equals(currentArtist);
+                boolean trackChanged = !t.equals(currentTitle) || currentArtist == null;
+                if (!trackChanged && !a.equals(currentArtist)) {
+                    // Music sends metadata twice: first without the artist, then
+                    // with it. Enrich the existing track instead of forking a new
+                    // one (which would split the session and duplicate the row).
+                    if (!a.isEmpty()) {
+                        currentArtist = a;
+                        ListeningDatabase.getInstance().updateTrackArtist(currentTrackId, a);
+                    }
+                }
                 if (trackChanged) {
                     endCurrentSessionLocked();
                     long trackId = ListeningDatabase.getInstance().ensureTrack(t, a, durationMs);
@@ -84,13 +100,14 @@ public final class SessionTracker {
                 boolean nowPlaying = isPlaying(state);
 
                 if (wasPlaying && nowPlaying) {
-                    // Still playing: commit elapsed wall time since last tick.
+                    // Still playing: commit elapsed wall time since last commit.
                     long elapsed = now - lastTickWallMs;
                     if (elapsed > 0 && elapsed < 60_000) { // guard against clock jumps
                         accumulatedListenedMs += elapsed;
                         ListeningDatabase.getInstance()
                                 .accumulateSession(currentSessionId, elapsed);
                     }
+                    scheduleFlushLocked();
                 } else if (wasPlaying && !nowPlaying) {
                     // Leaving playback (pause/stop): commit final slice.
                     long elapsed = now - lastTickWallMs;
@@ -99,11 +116,13 @@ public final class SessionTracker {
                         ListeningDatabase.getInstance()
                                 .accumulateSession(currentSessionId, elapsed);
                     }
+                    cancelFlushLocked();
                     if (state == STATE_STOPPED) {
                         endCurrentSessionLocked();
                     }
                 } else if (!wasPlaying && nowPlaying) {
-                    // Resuming playback: just re-anchor the clock.
+                    // Resuming playback: re-anchor the clock and start flushing.
+                    scheduleFlushLocked();
                 }
 
                 lastState = state;
@@ -117,8 +136,47 @@ public final class SessionTracker {
         return state == STATE_PLAYING || state == STATE_BUFFERING;
     }
 
+    /** Schedule the next wall-time flush while playing. Caller holds lock. */
+    private static void scheduleFlushLocked() {
+        cancelFlushLocked();
+        flushHandler.postDelayed(SessionTracker::flushRunnable, FLUSH_INTERVAL_MS);
+    }
+
+    private static void cancelFlushLocked() {
+        flushHandler.removeCallbacksAndMessages(null);
+    }
+
+    /** Runs on main thread; hops to a background thread for the DB write. */
+    private static void flushRunnable() {
+        Utils.runOnBackgroundThread(() -> {
+            synchronized (lock) {
+                if (currentSessionId < 0 || !isPlaying(lastState)) return; // stale timer
+                long now = System.currentTimeMillis();
+                long elapsed = now - lastTickWallMs;
+                if (elapsed > 0 && elapsed < 60_000) {
+                    accumulatedListenedMs += elapsed;
+                    ListeningDatabase.getInstance()
+                            .accumulateSession(currentSessionId, elapsed);
+                }
+                lastTickWallMs = now;
+                scheduleFlushLocked();
+            }
+        });
+    }
+
     /** Close the open session and roll it up into the track. Caller holds lock. */
     private static void endCurrentSessionLocked() {
+        cancelFlushLocked();
+        if (isPlaying(lastState) && currentSessionId >= 0) {
+            // Playback was still running (e.g. track changed mid-song): commit
+            // the pending wall time since the last flush before closing.
+            long now = System.currentTimeMillis();
+            long elapsed = now - lastTickWallMs;
+            if (elapsed > 0 && elapsed < 60_000) {
+                accumulatedListenedMs += elapsed;
+                lastTickWallMs = now;
+            }
+        }
         if (currentSessionId >= 0 && currentTrackId >= 0) {
             ListeningDatabase.getInstance().endSession(currentSessionId, currentTrackId,
                     System.currentTimeMillis(), accumulatedListenedMs);
@@ -126,5 +184,6 @@ public final class SessionTracker {
         currentSessionId = -1;
         currentTrackId = -1;
         accumulatedListenedMs = 0;
+        lastState = STATE_STOPPED;
     }
 }
