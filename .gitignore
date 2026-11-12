@@ -1,0 +1,31 @@
+# Binaries / large artifacts
+*.apk
+*.apks
+*.xapk
+*.dex
+*.rve
+*.jar
+
+# Decompilation + analysis scratch
+decompiled/
+apk/
+*.dump
+apktool_m/
+jadx.log
+
+# Build outputs
+build/
+.gradle/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# OS / editor junk
+.DS_Store
+*.iml
+.idea/
+.vscode/
+
+# Logs
+*.log
