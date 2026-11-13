@@ -233,3 +233,23 @@ Rebuilt the Wrapped header to those metrics:
 Result (measured identically): arrow x53..93 y170..210, title x193 y173..221 -> matches app
 within 1-3px (was 56dp bar => title 11px too low, ActionBar default 22sp regular).
 Body typography aligned to app defaults: 16sp primary, 14sp secondary, medium section titles.
+
+## SESSION 9 — APPLE-STYLE CARDS, GLASS, ARTWORK (Nov 13)
+Design: rebuilt the report as full-screen cards (swipe/tap, progress segments, page
+counter) styled after Apple Music Replay: black canvas with aurora gradients
+(Apple system palette, no dominant green), frosted-glass panels over a blurred
+backdrop, big bold titles + grey secondary copy, monogram artwork tiles.
+Copy rewritten in second person ("You had one artist on repeat", "You're a 9 PM
+person", "These songs didn't stand a chance").
+
+Artwork: the media-session metadata already contains the real cover as a Bitmap
+("android.media.metadata.ALBUM_ART"); the patch now hands the whole Bundle to the
+extension, which saves that bitmap to the app cache and stores the path in the DB
+(tracks.artwork_url, artist_artwork table). Fallback for tracks without a bitmap:
+public catalogue lookup (iTunes Search, Deezer, MusicBrainz) with STRICT
+title+artist matching so a cover is never borrowed from another song. Lookups run
+only after playback pauses (single MIN_PRIORITY worker) — running them during
+playback caused audible crackling.
+
+DB v3: tracks.artwork_url/artwork_fetched, artist_artwork(artist, artwork_url,
+fetched); ensureTrack merges rows whose artist arrived late instead of duplicating.

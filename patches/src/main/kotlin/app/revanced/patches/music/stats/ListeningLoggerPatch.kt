@@ -104,16 +104,7 @@ val listeningLoggerPatch = bytecodePatch(
                     if-eqz p1, :rv_stats_meta_skip
                     iget-object v0, p1, ${bundleField.definingClass}->${bundleField.name}:${bundleField.type}
                     if-eqz v0, :rv_stats_meta_skip
-                    const-string v1, "android.media.metadata.TITLE"
-                    invoke-virtual { v0, v1 }, Landroid/os/Bundle;->getCharSequence(Ljava/lang/String;)Ljava/lang/CharSequence;
-                    move-result-object v1
-                    const-string v2, "android.media.metadata.ARTIST"
-                    invoke-virtual { v0, v2 }, Landroid/os/Bundle;->getCharSequence(Ljava/lang/String;)Ljava/lang/CharSequence;
-                    move-result-object v2
-                    const-string v3, "android.media.metadata.DURATION"
-                    invoke-virtual { v0, v3 }, Landroid/os/Bundle;->getLong(Ljava/lang/String;)J
-                    move-result-wide v3
-                    invoke-static { v1, v2, v3, v4 }, $EXTENSION_CLASS_DESCRIPTOR->onTrackInfo(Ljava/lang/CharSequence;Ljava/lang/CharSequence;J)V
+                    invoke-static { v0 }, $EXTENSION_CLASS_DESCRIPTOR->onMetadata(Landroid/os/Bundle;)V
                     :rv_stats_meta_skip
                 """,
             )

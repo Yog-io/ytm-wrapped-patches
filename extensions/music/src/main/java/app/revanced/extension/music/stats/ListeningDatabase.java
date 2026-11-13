@@ -16,7 +16,7 @@ import app.revanced.extension.shared.Utils;
  */
 public final class ListeningDatabase {
     private static final String DB_NAME = "revanced_listening.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 3;
 
     private static volatile ListeningDatabase instance;
     private final Helper helper;
@@ -44,17 +44,46 @@ public final class ListeningDatabase {
      * Idempotently ensure a track row exists, keyed by title+artist, and return its id.
      */
     public long ensureTrack(String title, String artist, long durationMs) {
+        return ensureTrack(title, artist, durationMs, null);
+    }
+
+    /** Same as {@link #ensureTrack(String, String, long)} but also stores artwork. */
+    public long ensureTrack(String title, String artist, long durationMs, String artworkUrl) {
         SQLiteDatabase db = db();
+        long id = -1;
+
+        // A row created before the artist was known (artist = "") is the same song:
+        // reuse it instead of storing a duplicate.
+        if (artist != null && !artist.isEmpty()) {
+            Cursor orphan = db.query("tracks", new String[]{"id"},
+                    "title = ? AND artist = ''", new String[]{title}, null, null, null);
+            if (orphan.moveToFirst()) {
+                id = orphan.getLong(0);
+            }
+            orphan.close();
+        }
+
         Cursor c = db.query("tracks", new String[]{"id"},
                 "title = ? AND artist = ?", new String[]{title, artist},
                 null, null, null);
-        long id;
         if (c.moveToFirst()) {
             id = c.getLong(0);
-            // Refresh duration if we now have a better value.
+        }
+        c.close();
+
+        if (id >= 0) {
+            ContentValues cv = new ContentValues();
             if (durationMs > 0) {
-                ContentValues cv = new ContentValues();
                 cv.put("duration_ms", durationMs);
+            }
+            if (artist != null && !artist.isEmpty()) {
+                cv.put("artist", artist);
+            }
+            if (artworkUrl != null && !artworkUrl.isEmpty()) {
+                cv.put("artwork_url", artworkUrl);
+                cv.put("artwork_fetched", 1);
+            }
+            if (cv.size() > 0) {
                 db.update("tracks", cv, "id = ?", new String[]{String.valueOf(id)});
             }
         } else {
@@ -65,10 +94,80 @@ public final class ListeningDatabase {
             cv.put("first_seen_ms", System.currentTimeMillis());
             cv.put("play_count", 0);
             cv.put("total_listened_ms", 0);
+            if (artworkUrl != null && !artworkUrl.isEmpty()) {
+                cv.put("artwork_url", artworkUrl);
+                cv.put("artwork_fetched", 1);
+            }
             id = db.insert("tracks", null, cv);
         }
-        c.close();
         return id;
+    }
+
+    /** Stores (or replaces) the artwork URL of a track. */
+    public void updateTrackArtwork(long trackId, String artworkUrl) {
+        if (trackId < 0 || artworkUrl == null || artworkUrl.isEmpty()) return;
+        ContentValues cv = new ContentValues();
+        cv.put("artwork_url", artworkUrl);
+        cv.put("artwork_fetched", 1);
+        db().update("tracks", cv, "id = ?", new String[]{String.valueOf(trackId)});
+    }
+
+    /** Stores the artwork of a track identified by its name. */
+    public void updateArtworkByName(String title, String artist, String artworkUrl) {
+        if (artworkUrl == null || artworkUrl.isEmpty()) return;
+        ContentValues cv = new ContentValues();
+        cv.put("artwork_url", artworkUrl);
+        cv.put("artwork_fetched", 1);
+        if (artist == null || artist.isEmpty()) {
+            db().update("tracks", cv, "title = ?", new String[]{title});
+        } else {
+            db().update("tracks", cv, "title = ? AND artist = ?",
+                    new String[]{title, artist});
+        }
+    }
+
+    /** True when the artwork of this track was already looked up (or has none). */
+    public boolean trackArtworkFetched(long trackId) {
+        if (trackId < 0) return true;
+        Cursor c = db().query("tracks", new String[]{"artwork_fetched"},
+                "id = ?", new String[]{String.valueOf(trackId)}, null, null, null);
+        boolean fetched = false;
+        if (c.moveToFirst()) fetched = c.getInt(0) == 1;
+        c.close();
+        return fetched;
+    }
+
+    /** Stores the picture of an artist, once. */
+    public void setArtistArtwork(String artist, String artworkUrl) {
+        if (artist == null || artist.isEmpty()) return;
+        ContentValues cv = new ContentValues();
+        cv.put("artist", artist);
+        cv.put("artwork_url", artworkUrl);
+        cv.put("fetched", 1);
+        db().insertWithOnConflict("artist_artwork", null, cv,
+                SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    /** The stored picture of an artist, or null. */
+    public String artistArtwork(String artist) {
+        if (artist == null || artist.isEmpty()) return null;
+        Cursor c = db().query("artist_artwork", new String[]{"artwork_url"},
+                "artist = ?", new String[]{artist}, null, null, null);
+        String url = null;
+        if (c.moveToFirst() && !c.isNull(0)) url = c.getString(0);
+        c.close();
+        return url;
+    }
+
+    /** True when the artist picture was already looked up. */
+    public boolean artistArtworkFetched(String artist) {
+        if (artist == null || artist.isEmpty()) return true;
+        Cursor c = db().query("artist_artwork", new String[]{"fetched"},
+                "artist = ?", new String[]{artist}, null, null, null);
+        boolean fetched = false;
+        if (c.moveToFirst()) fetched = c.getInt(0) == 1;
+        c.close();
+        return fetched;
     }
 
     /**
@@ -128,15 +227,19 @@ public final class ListeningDatabase {
 
     public Cursor topTracksByListened(int limit) {
         return db().query("tracks", new String[]{"title", "artist", "play_count",
-                        "total_listened_ms", "duration_ms"},
+                        "total_listened_ms", "duration_ms", "artwork_url"},
                 null, null, null, null, "total_listened_ms DESC",
                 String.valueOf(limit));
     }
 
     public Cursor topArtistsByListened(int limit) {
+        // The picture of an artist is the one stored for that artist.
         return db().rawQuery(
-                "SELECT artist, SUM(total_listened_ms) AS listened, COUNT(*) AS tracks " +
-                        "FROM tracks GROUP BY artist ORDER BY listened DESC LIMIT ?",
+                "SELECT t.artist, SUM(t.total_listened_ms) AS listened, COUNT(*) AS tracks, " +
+                        "(SELECT artwork_url FROM artist_artwork a " +
+                        "WHERE a.artist = t.artist AND a.artwork_url IS NOT NULL " +
+                        "AND a.artwork_url != '') AS artwork " +
+                        "FROM tracks t GROUP BY t.artist ORDER BY listened DESC LIMIT ?",
                 new String[]{String.valueOf(limit)});
     }
 
@@ -198,6 +301,29 @@ public final class ListeningDatabase {
         return v;
     }
 
+    /** Distinct session days as day indices (ms since epoch / 86400000), ascending. */
+    public Cursor distinctSessionDays() {
+        return db().rawQuery(
+                "SELECT DISTINCT CAST(start_ms / 86400000 AS INTEGER) FROM sessions ORDER BY 1", null);
+    }
+
+    /** Number of tracks first seen at or after the given time. */
+    public int tracksFirstSeenSince(long sinceMs) {
+        Cursor c = db().rawQuery("SELECT COUNT(*) FROM tracks WHERE first_seen_ms >= ?",
+                new String[]{String.valueOf(sinceMs)});
+        int v = 0;
+        if (c.moveToFirst()) v = c.getInt(0);
+        c.close();
+        return v;
+    }
+
+    /** Most listened track by a given artist, or null. Columns: title, total_listened_ms. */
+    public Cursor bestTrackForArtist(String artist) {
+        return db().query("tracks", new String[]{"title", "total_listened_ms"},
+                "artist = ?", new String[]{artist},
+                null, null, "total_listened_ms DESC", "1");
+    }
+
     private static final class Helper extends SQLiteOpenHelper {
         Helper(Context context) {
             super(context, DB_NAME, null, DB_VERSION);
@@ -213,7 +339,13 @@ public final class ListeningDatabase {
                     "first_seen_ms INTEGER DEFAULT 0, " +
                     "play_count INTEGER DEFAULT 0, " +
                     "total_listened_ms INTEGER DEFAULT 0, " +
+                    "artwork_url TEXT, " +
+                    "artwork_fetched INTEGER DEFAULT 0, " +
                     "UNIQUE(title, artist))");
+            db.execSQL("CREATE TABLE artist_artwork (" +
+                    "artist TEXT PRIMARY KEY, " +
+                    "artwork_url TEXT, " +
+                    "fetched INTEGER DEFAULT 0)");
             db.execSQL("CREATE TABLE sessions (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     "track_id INTEGER NOT NULL, " +
@@ -227,7 +359,16 @@ public final class ListeningDatabase {
 
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldV, int newV) {
-            // v1: no migrations yet.
+            if (oldV < 2) {
+                db.execSQL("ALTER TABLE tracks ADD COLUMN artwork_url TEXT");
+            }
+            if (oldV < 3) {
+                db.execSQL("ALTER TABLE tracks ADD COLUMN artwork_fetched INTEGER DEFAULT 0");
+                db.execSQL("CREATE TABLE IF NOT EXISTS artist_artwork (" +
+                        "artist TEXT PRIMARY KEY, " +
+                        "artwork_url TEXT, " +
+                        "fetched INTEGER DEFAULT 0)");
+            }
         }
     }
 }

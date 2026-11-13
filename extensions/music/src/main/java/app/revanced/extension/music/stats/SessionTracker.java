@@ -1,6 +1,7 @@
 package app.revanced.extension.music.stats;
 
 import app.revanced.extension.music.settings.Settings;
+import app.revanced.extension.shared.Logger;
 import app.revanced.extension.shared.Utils;
 
 /**
@@ -28,6 +29,12 @@ public final class SessionTracker {
             new android.os.Handler(android.os.Looper.getMainLooper());
 
     // Current session (guarded by lock).
+    // Artwork lookups waiting for playback to pause.
+    private static long pendingTrackId = -1;
+    private static String pendingTrackTitle;
+    private static String pendingTrackArtist;
+    private static String pendingArtist;
+
     private static String currentTitle;
     private static String currentArtist;
     private static long currentTrackId = -1;
@@ -42,9 +49,81 @@ public final class SessionTracker {
 
     /**
      * Injection point: {@code ie.m(MediaMetadataCompat)} — fires on track/metadata change.
-     * smali extracts TITLE, ARTIST, DURATION from the metadata Bundle.
+     * The whole metadata Bundle is handed over so the extension can also pick up the
+     * artwork (thumbnail URL or video id) that YouTube Music puts alongside the title.
+     */
+    public static void onMetadata(android.os.Bundle metadata) {
+        if (metadata == null) return;
+        onTrackInfo(
+                metadata.getCharSequence("android.media.metadata.TITLE"),
+                metadata.getCharSequence("android.media.metadata.ARTIST"),
+                metadata.getLong("android.media.metadata.DURATION"),
+                extractArtwork(metadata));
+    }
+
+    /**
+     * Finds a usable artwork URL inside the metadata bundle: either a direct image
+     * URL, or a video id that can be turned into a YouTube thumbnail.
+     */
+    private static boolean probedArt;
+
+    private static String extractArtwork(android.os.Bundle metadata) {
+        String videoId = null;
+        if (!probedArt) {
+            probedArt = true;
+            Object art = metadata.getParcelable("android.media.metadata.ALBUM_ART");
+            Logger.printInfo(() -> "Art probe: albumArt=" + (art == null ? "null"
+                    : art.getClass().getSimpleName() + " " + ((android.graphics.Bitmap) art).getWidth()
+                    + "x" + ((android.graphics.Bitmap) art).getHeight())
+                    + " keys=" + metadata.keySet().size());
+        }
+        try {
+            for (String key : metadata.keySet()) {
+                Object value = metadata.get(key);
+                if (value instanceof CharSequence) {
+                    String text = value.toString();
+                    if (text.startsWith("http")
+                            && (text.contains("googleusercontent.com")
+                            || text.contains("ytimg.com")
+                            || text.contains("/vi_webp/")
+                            || text.contains("ggpht"))) {
+                        return text;
+                    }
+                } else if (value instanceof String) {
+                    String text = (String) value;
+                    if (text.contains("googleusercontent.com") || text.contains("ytimg.com")) {
+                        return text;
+                    }
+                }
+                if (videoId == null) {
+                    String lower = key.toLowerCase();
+                    if (lower.equals("videoid") || lower.equals("video_id")) {
+                        Object idValue = metadata.get(key);
+                        if (idValue instanceof CharSequence && idValue.toString().length() >= 11) {
+                            videoId = idValue.toString();
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            Logger.printException(() -> "Could not read metadata artwork", ex);
+        }
+        if (videoId != null) {
+            return "https://i.ytimg.com/vi/" + videoId + "/mqdefault.jpg";
+        }
+        return null;
+    }
+
+    /**
+     * Injection point: {@code ie.m(MediaMetadataCompat)} — fires on track/metadata change.
      */
     public static void onTrackInfo(CharSequence title, CharSequence artist, long durationMs) {
+        onTrackInfo(title, artist, durationMs, null);
+    }
+
+    /** Same as {@link #onTrackInfo(CharSequence, CharSequence, long)} with artwork. */
+    public static void onTrackInfo(CharSequence title, CharSequence artist, long durationMs,
+                                   String artworkUrl) {
         if (!Settings.LISTENING_STATS.get()) return;
 
         final String t = title == null ? "" : title.toString().trim();
@@ -62,14 +141,34 @@ public final class SessionTracker {
                         currentArtist = a;
                         ListeningDatabase.getInstance().updateTrackArtist(currentTrackId, a);
                     }
+                    if (artworkUrl != null && !artworkUrl.isEmpty()) {
+                        ListeningDatabase.getInstance()
+                                .updateTrackArtwork(currentTrackId, artworkUrl);
+                    }
                 }
                 if (trackChanged) {
                     endCurrentSessionLocked();
-                    long trackId = ListeningDatabase.getInstance().ensureTrack(t, a, durationMs);
+                    long trackId = ListeningDatabase.getInstance()
+                            .ensureTrack(t, a, durationMs, artworkUrl);
                     currentTitle = t;
                     currentArtist = a;
                     currentTrackId = trackId;
                     trackDurationMs = durationMs;
+                    if (artworkUrl != null && ArtworkStore.isLocal(artworkUrl) && !a.isEmpty()) {
+                        // The track cover doubles as the artist picture.
+                        ListeningDatabase.getInstance().setArtistArtwork(a, artworkUrl);
+                    }
+                    // Anything still missing is looked up after playback stops, so
+                    // no network work ever runs while the music is playing.
+                    if ((artworkUrl == null || artworkUrl.isEmpty())
+                            && !ListeningDatabase.getInstance().trackArtworkFetched(trackId)) {
+                        pendingTrackId = trackId;
+                        pendingTrackTitle = t;
+                        pendingTrackArtist = a;
+                    }
+                    if (!a.isEmpty() && !ListeningDatabase.getInstance().artistArtworkFetched(a)) {
+                        pendingArtist = a;
+                    }
                     // Open a session optimistically; it becomes "active" once state=playing.
                     currentSessionId = ListeningDatabase.getInstance()
                             .startSession(trackId, System.currentTimeMillis());
@@ -117,6 +216,7 @@ public final class SessionTracker {
                                 .accumulateSession(currentSessionId, elapsed);
                     }
                     cancelFlushLocked();
+                    fetchPendingArtwork();
                     if (state == STATE_STOPPED) {
                         endCurrentSessionLocked();
                     }
@@ -128,6 +228,34 @@ public final class SessionTracker {
                 lastState = state;
                 lastTickWallMs = now;
                 lastPositionMs = positionMs;
+            }
+        });
+    }
+
+    /**
+     * Looks up the artwork of the track and artist that were played last. Runs on
+     * a background thread while nothing is playing.
+     */
+    private static void fetchPendingArtwork() {
+        final long trackId = pendingTrackId;
+        final String title = pendingTrackTitle;
+        final String artist = pendingTrackArtist;
+        final String artistOnly = pendingArtist;
+        pendingTrackId = -1;
+        pendingTrackTitle = null;
+        pendingTrackArtist = null;
+        pendingArtist = null;
+
+        if (trackId < 0 && artistOnly == null) return;
+        Utils.runOnBackgroundThread(() -> {
+            ListeningDatabase database = ListeningDatabase.getInstance();
+            if (trackId >= 0 && title != null) {
+                ArtworkResolver.resolveTrack(artist, title, url ->
+                        database.updateTrackArtwork(trackId, url));
+            }
+            if (artistOnly != null) {
+                ArtworkResolver.resolveArtist(artistOnly, url ->
+                        database.setArtistArtwork(artistOnly, url));
             }
         });
     }
