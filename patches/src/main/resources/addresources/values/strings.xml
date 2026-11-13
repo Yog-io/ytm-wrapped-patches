@@ -1893,6 +1893,8 @@ Video playback with AV1 may stutter or drop frames."</string>
             <string name="revanced_music_listening_stats_title">Listening statistics</string>
             <string name="revanced_music_listening_stats_summary_on">Listening data is recorded for the Wrapped report</string>
             <string name="revanced_music_listening_stats_summary_off">Listening data is not recorded</string>
+            <string name="revanced_music_wrapped_title">Music Wrapped</string>
+            <string name="revanced_music_wrapped_summary">See your listening report</string>
         </patch>
     </app>
     <app id="twitch">

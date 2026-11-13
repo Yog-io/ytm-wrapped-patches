@@ -11,6 +11,7 @@ import app.revanced.patches.music.misc.extension.sharedExtensionPatch
 import app.revanced.patches.music.misc.settings.PreferenceScreen
 import app.revanced.patches.music.misc.settings.settingsPatch
 import app.revanced.patches.shared.misc.settings.preference.SwitchPreference
+import app.revanced.patches.shared.misc.settings.preference.TextPreference
 import app.revanced.util.getReference
 import app.revanced.util.indexOfFirstInstructionOrThrow
 import com.android.tools.smali.dexlib2.Opcode
@@ -46,6 +47,12 @@ val listeningLoggerPatch = bytecodePatch(
 
         PreferenceScreen.MISC.addPreferences(
             SwitchPreference("revanced_music_listening_stats"),
+            TextPreference(
+                key = null,
+                titleKey = "revanced_music_wrapped_title",
+                summaryKey = "revanced_music_wrapped_summary",
+                tag = "app.revanced.extension.music.settings.preference.WrappedReportPreference",
+            ),
         )
 
         // --- Hook setMetadata: track identity (TITLE/ARTIST/DURATION) ---

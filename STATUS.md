@@ -189,3 +189,11 @@ Manager JsonSource ReVancedAsset schema verified from Manager source).
 - Manager 2.6.0 flow on emulator: add source (raw patches.json URL) or local-import the rvp,
   patch stock APK in-Manager, install, verify same behavior (covers split installs too).
 - Then Wrapped report UI.
+
+## SESSION 5 — WRAPPED REPORT UI (Nov 13)
+- WrappedReport (WebView dialog, dark theme) + WrappedReportPreference wired into MISC.
+- Verified on emulator with synthetic DB (adb root; no real playback -> Google history untouched):
+  50 tracks / 433 sessions / 22.2h. Report showed 22h09m, 251 full plays, 50 tracks, 44 artists,
+  220 active days; top tracks + artists matched SQL exactly; hour/day charts rendered.
+- Empty-DB path verified ("Nothing here yet"; app recreates schema with user_version=1).
+- Known minor: late-arriving DURATION isn't backfilled on the enrich path (duration 0 -> hidden).
