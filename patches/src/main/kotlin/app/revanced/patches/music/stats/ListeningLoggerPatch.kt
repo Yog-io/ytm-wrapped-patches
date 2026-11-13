@@ -110,6 +110,18 @@ val listeningLoggerPatch = bytecodePatch(
             )
         }
 
+        // --- Hook setQueue: the queue items carry the real cover art ---
+        mediaSessionSetQueueMethodMatch.method.apply {
+            addInstructions(
+                0,
+                """
+                    if-eqz p1, :rv_stats_queue_skip
+                    invoke-static { p1 }, $EXTENSION_CLASS_DESCRIPTOR->onQueue(Ljava/util/List;)V
+                    :rv_stats_queue_skip
+                """,
+            )
+        }
+
         // --- Hook setPlaybackState: position + state, fires every ~1s while playing ---
         mediaSessionSetPlaybackStateMethodMatch.method.apply {
             // Locate PlaybackState$Builder.setState(IJFJ) and walk back to the iget /

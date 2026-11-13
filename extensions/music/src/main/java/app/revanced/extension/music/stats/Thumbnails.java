@@ -39,6 +39,7 @@ final class Thumbnails {
     /** Shows the artwork for {@code url} in {@code view}, if there is one. */
     static void load(ImageView view, String url) {
         if (url == null || url.isEmpty()) return;
+        if (url.contains("//1000x1000") || url.endsWith("/")) return; // malformed
 
         view.setTag(url);
 
@@ -78,6 +79,8 @@ final class Thumbnails {
             connection.setConnectTimeout(8000);
             connection.setReadTimeout(8000);
             connection.setInstanceFollowRedirects(true);
+            connection.setRequestProperty("User-Agent", "ReVanced-Wrapped/1.0");
+            connection.setRequestProperty("Accept", "image/*");
             if (connection.getResponseCode() / 100 != 2) return null;
 
             try (InputStream in = connection.getInputStream()) {

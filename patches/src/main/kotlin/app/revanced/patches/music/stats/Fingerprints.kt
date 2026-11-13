@@ -24,3 +24,14 @@ internal val BytecodePatchContext.mediaSessionSetPlaybackStateMethodMatch by com
     parameterTypes("Landroid/support/v4/media/session/PlaybackStateCompat;")
     instructions(method("setPlaybackState"))
 }
+
+/**
+ * `ie.q(List)`: hands the play queue to the platform media session. Queue items
+ * carry the real artwork bitmaps, the most reliable source of covers.
+ */
+internal val BytecodePatchContext.mediaSessionSetQueueMethodMatch by composingFirstMethod {
+    accessFlags(AccessFlags.PUBLIC, AccessFlags.FINAL)
+    returnType("V")
+    parameterTypes("Ljava/util/List;")
+    instructions(method("setQueue"))
+}

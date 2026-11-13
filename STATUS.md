@@ -253,3 +253,17 @@ playback caused audible crackling.
 
 DB v3: tracks.artwork_url/artwork_fetched, artist_artwork(artist, artwork_url,
 fetched); ensureTrack merges rows whose artist arrived late instead of duplicating.
+
+## SESSION 10 — TIMING FIX + QUEUE ARTWORK (Nov 13)
+Bug: new plays were barely credited (~0.8s per play). setPlaybackState fires
+constantly (including bursts of PAUSED while music keeps playing), and the old
+code re-anchored the clock on every call, so almost no time was ever committed.
+Fix: commit time is measured from the last COMMIT (not the last state event);
+PAUSED is only honoured when it sticks (3 in a row and no PLAYING for 2s);
+PLAYING/BUFFERING always (re)arm the 10s flush. Verified: 30s of playback now
+credits 30s.
+
+Artwork: hooked MediaSession.setQueue - every queue item carries the real cover
+bitmap. The support-library fields are obfuscated, so the bitmap is paired to the
+track by matching the item's text against the tracks we already know. Artwork is
+written to the app cache and its path stored in the DB (no network).

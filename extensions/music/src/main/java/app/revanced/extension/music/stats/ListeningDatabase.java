@@ -103,6 +103,18 @@ public final class ListeningDatabase {
         return id;
     }
 
+    /** Finds a track by its exact title and artist, or -1. */
+    public long trackIdByNames(String title, String artist) {
+        if (title == null || title.isEmpty()) return -1;
+        Cursor c = db().query("tracks", new String[]{"id"},
+                "title = ? AND artist = ?", new String[]{title, artist == null ? "" : artist},
+                null, null, null);
+        long id = -1;
+        if (c.moveToFirst()) id = c.getLong(0);
+        c.close();
+        return id;
+    }
+
     /** Stores (or replaces) the artwork URL of a track. */
     public void updateTrackArtwork(long trackId, String artworkUrl) {
         if (trackId < 0 || artworkUrl == null || artworkUrl.isEmpty()) return;

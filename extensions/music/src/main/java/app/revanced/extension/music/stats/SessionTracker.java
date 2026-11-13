@@ -1,5 +1,7 @@
 package app.revanced.extension.music.stats;
 
+import java.util.List;
+
 import app.revanced.extension.music.settings.Settings;
 import app.revanced.extension.shared.Logger;
 import app.revanced.extension.shared.Utils;
@@ -40,12 +42,108 @@ public final class SessionTracker {
     private static long currentTrackId = -1;
     private static long currentSessionId = -1;
     private static long trackDurationMs;
-    private static int lastState = STATE_STOPPED;
-    private static long lastTickWallMs;      // wall clock of last activity
-    private static long lastPositionMs;      // player position at last tick
+    private static boolean playing;            // playback is currently running
+    private static long lastCommitWallMs;     // wall clock of the last commit
+    private static long lastPlayingWallMs;    // wall clock of the last PLAYING state
+    private static int pausedStreak;          // consecutive PAUSED states
     private static long accumulatedListenedMs; // listened ms committed so far
 
     private SessionTracker() {}
+
+    /**
+     * Injection point: the play queue handed to the media session. Every queue item
+     * carries the real cover bitmap, which is the most reliable artwork source.
+     * Read reflectively so the extension needs no support-library classes.
+     */
+    public static void onQueue(java.util.List queue) {
+        if (queue == null || queue.isEmpty()) return;
+        Utils.runOnBackgroundThread(() -> {
+            int count = 0;
+            for (Object item : queue) {
+                if (count++ > 60) break;
+                try {
+                    Object description = findDescription(item);
+                    if (description == null) continue;
+                    android.graphics.Bitmap art = findBitmap(description);
+                    if (art == null) continue;
+                    List<String> texts = findTexts(description);
+                    saveQueueArtwork(art, texts);
+                } catch (Exception ex) {
+                    Logger.printInfo(() -> "Could not read queue artwork: " + ex.getMessage());
+                }
+            }
+        });
+    }
+
+    /** The media description of a queue item, whatever the field is called. */
+    private static Object findDescription(Object item) {
+        try {
+            for (java.lang.reflect.Field field : item.getClass().getDeclaredFields()) {
+                field.setAccessible(true);
+                Object value = field.get(item);
+                if (value == null) continue;
+                String name = value.getClass().getName();
+                if (name.contains("MediaDescription")) return value;
+            }
+        } catch (Exception ex) {
+            Logger.printInfo(() -> "Could not read queue description: " + ex.getMessage());
+        }
+        return null;
+    }
+
+    /** The cover bitmap inside a media description. */
+    private static android.graphics.Bitmap findBitmap(Object description) {
+        try {
+            for (java.lang.reflect.Field field : description.getClass().getDeclaredFields()) {
+                field.setAccessible(true);
+                if (!android.graphics.Bitmap.class.isAssignableFrom(field.getType())) continue;
+                android.graphics.Bitmap bitmap = (android.graphics.Bitmap) field.get(description);
+                if (bitmap != null && !bitmap.isRecycled()) return bitmap;
+            }
+        } catch (Exception ex) {
+            Logger.printInfo(() -> "Could not read queue bitmap: " + ex.getMessage());
+        }
+        return null;
+    }
+
+    /** All the text carried by a media description (title, subtitle, ...). */
+    private static List<String> findTexts(Object description) {
+        List<String> texts = new java.util.ArrayList<>();
+        try {
+            for (java.lang.reflect.Field field : description.getClass().getDeclaredFields()) {
+                field.setAccessible(true);
+                Object value = field.get(description);
+                if (value instanceof CharSequence) {
+                    String text = value.toString().trim();
+                    if (!text.isEmpty() && !texts.contains(text)) texts.add(text);
+                }
+            }
+        } catch (Exception ex) {
+            Logger.printInfo(() -> "Could not read queue text: " + ex.getMessage());
+        }
+        return texts;
+    }
+
+    /** Pairs the cover with the track we already know, then stores it. */
+    private static void saveQueueArtwork(android.graphics.Bitmap art, List<String> texts) {
+        ListeningDatabase database = ListeningDatabase.getInstance();
+        for (String first : texts) {
+            for (String second : texts) {
+                if (first.equals(second)) continue;
+                long id = database.trackIdByNames(first, second);
+                if (id < 0) id = database.trackIdByNames(second, first);
+                if (id < 0) continue;
+
+                String path = ArtworkStore.save(art, first + "|" + second);
+                if (path == null) return;
+                database.updateArtworkByName(first, second, path);
+                database.updateArtworkByName(second, first, path);
+                database.setArtistArtwork(second, path);
+                database.setArtistArtwork(first, path);
+                return;
+            }
+        }
+    }
 
     /**
      * Injection point: {@code ie.m(MediaMetadataCompat)} — fires on track/metadata change.
@@ -115,6 +213,11 @@ public final class SessionTracker {
     }
 
     /**
+     * Injection point: the play queue handed to the media session. Every queue item
+     * carries the real cover bitmap, which is the most reliable artwork source.
+     * Read reflectively so the extension needs no support-library classes.
+     */
+    /**
      * Injection point: {@code ie.m(MediaMetadataCompat)} — fires on track/metadata change.
      */
     public static void onTrackInfo(CharSequence title, CharSequence artist, long durationMs) {
@@ -172,9 +275,10 @@ public final class SessionTracker {
                     // Open a session optimistically; it becomes "active" once state=playing.
                     currentSessionId = ListeningDatabase.getInstance()
                             .startSession(trackId, System.currentTimeMillis());
-                    lastState = STATE_STOPPED;
-                    lastTickWallMs = System.currentTimeMillis();
-                    lastPositionMs = 0;
+                    playing = false;
+                    pausedStreak = 0;
+                    lastCommitWallMs = System.currentTimeMillis();
+                    lastPlayingWallMs = 0;
                     accumulatedListenedMs = 0;
                 } else if (durationMs > 0 && durationMs != trackDurationMs) {
                     trackDurationMs = durationMs;
@@ -195,41 +299,48 @@ public final class SessionTracker {
                 if (currentSessionId < 0) return; // no track yet
                 long now = System.currentTimeMillis();
 
-                boolean wasPlaying = isPlaying(lastState);
-                boolean nowPlaying = isPlaying(state);
-
-                if (wasPlaying && nowPlaying) {
-                    // Still playing: commit elapsed wall time since last commit.
-                    long elapsed = now - lastTickWallMs;
-                    if (elapsed > 0 && elapsed < 60_000) { // guard against clock jumps
-                        accumulatedListenedMs += elapsed;
-                        ListeningDatabase.getInstance()
-                                .accumulateSession(currentSessionId, elapsed);
+                if (isPlaying(state)) {
+                    pausedStreak = 0;
+                    lastPlayingWallMs = now;
+                    if (!playing) {
+                        // Resuming: start the clock from now.
+                        playing = true;
+                        lastCommitWallMs = now;
                     }
                     scheduleFlushLocked();
-                } else if (wasPlaying && !nowPlaying) {
-                    // Leaving playback (pause/stop): commit final slice.
-                    long elapsed = now - lastTickWallMs;
-                    if (elapsed > 0 && elapsed < 60_000) {
-                        accumulatedListenedMs += elapsed;
-                        ListeningDatabase.getInstance()
-                                .accumulateSession(currentSessionId, elapsed);
-                    }
+                } else if (state == STATE_STOPPED) {
+                    commitLocked(now);
                     cancelFlushLocked();
-                    fetchPendingArtwork();
-                    if (state == STATE_STOPPED) {
-                        endCurrentSessionLocked();
+                    playing = false;
+                    pausedStreak = 0;
+                    endCurrentSessionLocked();
+                } else {
+                    // PAUSED. Music also emits bursts of PAUSED while it keeps
+                    // playing, so only a pause that sticks is treated as a pause.
+                    if (playing && now - lastPlayingWallMs < 2000) {
+                        pausedStreak = 0;
+                        return;
                     }
-                } else if (!wasPlaying && nowPlaying) {
-                    // Resuming playback: re-anchor the clock and start flushing.
-                    scheduleFlushLocked();
-                }
+                    pausedStreak++;
+                    if (pausedStreak < 3) return;
 
-                lastState = state;
-                lastTickWallMs = now;
-                lastPositionMs = positionMs;
+                    commitLocked(now);
+                    cancelFlushLocked();
+                    playing = false;
+                    pausedStreak = 0;
+                }
             }
         });
+    }
+
+    /** Adds the time since the last commit to the session. Caller holds lock. */
+    private static void commitLocked(long now) {
+        long elapsed = now - lastCommitWallMs;
+        if (elapsed > 0 && elapsed < 60_000) { // guard against clock jumps
+            accumulatedListenedMs += elapsed;
+            ListeningDatabase.getInstance().accumulateSession(currentSessionId, elapsed);
+        }
+        lastCommitWallMs = now;
     }
 
     /**
@@ -278,15 +389,8 @@ public final class SessionTracker {
     private static void flushRunnable() {
         Utils.runOnBackgroundThread(() -> {
             synchronized (lock) {
-                if (currentSessionId < 0 || !isPlaying(lastState)) return; // stale timer
-                long now = System.currentTimeMillis();
-                long elapsed = now - lastTickWallMs;
-                if (elapsed > 0 && elapsed < 60_000) {
-                    accumulatedListenedMs += elapsed;
-                    ListeningDatabase.getInstance()
-                            .accumulateSession(currentSessionId, elapsed);
-                }
-                lastTickWallMs = now;
+                if (currentSessionId < 0 || !playing) return; // stale timer
+                commitLocked(System.currentTimeMillis());
                 scheduleFlushLocked();
             }
         });
@@ -295,16 +399,12 @@ public final class SessionTracker {
     /** Close the open session and roll it up into the track. Caller holds lock. */
     private static void endCurrentSessionLocked() {
         cancelFlushLocked();
-        if (isPlaying(lastState) && currentSessionId >= 0) {
+        if (playing && currentSessionId >= 0) {
             // Playback was still running (e.g. track changed mid-song): commit
-            // the pending wall time since the last flush before closing.
-            long now = System.currentTimeMillis();
-            long elapsed = now - lastTickWallMs;
-            if (elapsed > 0 && elapsed < 60_000) {
-                accumulatedListenedMs += elapsed;
-                lastTickWallMs = now;
-            }
+            // the pending wall time since the last commit before closing.
+            commitLocked(System.currentTimeMillis());
         }
+        playing = false;
         if (currentSessionId >= 0 && currentTrackId >= 0) {
             ListeningDatabase.getInstance().endSession(currentSessionId, currentTrackId,
                     System.currentTimeMillis(), accumulatedListenedMs);
@@ -312,6 +412,6 @@ public final class SessionTracker {
         currentSessionId = -1;
         currentTrackId = -1;
         accumulatedListenedMs = 0;
-        lastState = STATE_STOPPED;
+        playing = false;
     }
 }
