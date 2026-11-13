@@ -1,10 +1,8 @@
 package app.revanced.extension.music.stats;
 
+import android.app.ActionBar;
 import android.app.Activity;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -12,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsetsController;
@@ -25,8 +24,9 @@ import app.revanced.extension.shared.Logger;
 import app.revanced.extension.shared.Utils;
 
 /**
- * Full-screen, fully native Music Wrapped report: native app bar with a back arrow,
- * native cards, lists and bar charts (no WebView).
+ * Full-screen Music Wrapped report. The screen header is the platform ActionBar
+ * (native title + up arrow, handled by the framework); the report body below it
+ * is rendered with native views.
  */
 @SuppressWarnings("unused")
 public final class WrappedReportActivity extends Activity {
@@ -48,21 +48,22 @@ public final class WrappedReportActivity extends Activity {
         getWindow().setStatusBarColor(BACKGROUND);
         getWindow().setNavigationBarColor(BACKGROUND);
 
+        // Native header: platform ActionBar with framework-drawn up arrow.
+        ActionBar actionBar = getActionBar();
+        if (actionBar != null) {
+            actionBar.setTitle("Music Wrapped");
+            actionBar.setDisplayHomeAsUpEnabled(true);
+            actionBar.setElevation(0);
+            actionBar.setBackgroundDrawable(new ColorDrawable(BACKGROUND));
+        }
+
         content = new FrameLayout(this);
         content.setBackgroundColor(BACKGROUND);
         content.addView(new ProgressBar(this), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER));
-
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BACKGROUND);
-        root.addView(buildAppBar(), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
-        root.addView(content, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        setContentView(root);
+        setContentView(content);
         setLightSystemBarIcons(false);
 
         Utils.runOnBackgroundThread(() -> {
@@ -78,30 +79,13 @@ public final class WrappedReportActivity extends Activity {
         });
     }
 
-    private View buildAppBar() {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setBackgroundColor(BACKGROUND);
-
-        View back = new BackArrowView();
-        back.setContentDescription("Back");
-        back.setClickable(true);
-        back.setFocusable(true);
-        back.setOnClickListener(v -> finish());
-        bar.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
-
-        TextView title = new TextView(this);
-        title.setText("Music Wrapped");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        titleParams.setMarginStart(dp(4));
-        bar.addView(title, titleParams);
-
-        return bar;
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == android.R.id.home) {
+            finish();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 
     private void showReport(WrappedReport.Data data) {
@@ -160,8 +144,7 @@ public final class WrappedReportActivity extends Activity {
         total.setTypeface(Typeface.DEFAULT_BOLD);
         card.addView(total);
 
-        TextView label = dimText("total listening time", 13);
-        card.addView(label);
+        card.addView(dimText("total listening time", 13));
 
         column.addView(card, topMargin(matchWidth(), dp(8)));
     }
@@ -246,8 +229,7 @@ public final class WrappedReportActivity extends Activity {
         LinearLayout axis = new LinearLayout(this);
         axis.setOrientation(LinearLayout.HORIZONTAL);
         for (String label : labels) {
-            TextView view = dimText(label, 11);
-            axis.addView(view, new LinearLayout.LayoutParams(
+            axis.addView(dimText(label, 11), new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         }
         column.addView(axis, topMargin(matchWidth(), dp(4)));
@@ -265,8 +247,7 @@ public final class WrappedReportActivity extends Activity {
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
 
-            TextView label = dimText(names[i], 11);
-            row.addView(label, new LinearLayout.LayoutParams(dp(38),
+            row.addView(dimText(names[i], 11), new LinearLayout.LayoutParams(dp(38),
                     ViewGroup.LayoutParams.WRAP_CONTENT));
 
             LinearLayout track = new LinearLayout(this);
@@ -396,36 +377,5 @@ public final class WrappedReportActivity extends Activity {
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
-    /** Material-style back arrow, drawn so no app resources or libraries are required. */
-    private final class BackArrowView extends View {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path path = new Path();
-
-        BackArrowView() {
-            super(WrappedReportActivity.this);
-            paint.setColor(Color.WHITE);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(2));
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            float cx = getWidth() / 2f;
-            float cy = getHeight() / 2f;
-            float arm = dp(6);
-            float shaft = dp(8);
-
-            path.reset();
-            path.moveTo(cx + arm, cy - shaft);
-            path.lineTo(cx - arm, cy);
-            path.lineTo(cx + arm, cy + shaft);
-            path.moveTo(cx - arm, cy);
-            path.lineTo(cx + arm, cy);
-            canvas.drawPath(path, paint);
-        }
     }
 }

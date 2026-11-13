@@ -212,3 +212,13 @@ Manager JsonSource ReVancedAsset schema verified from Manager source).
   (failed sign-in was actually dead DNS, not microG).
 - Note: adb install -r fails across patch runs (CLI re-signs each time with a new key)
   -> uninstall + install, then re-push the DB.
+
+## SESSION 7 — NATIVE ACTIONBAR HEADER (Nov 13)
+- Screen header now comes from the platform: activity theme is @android:style/Theme.Material
+  (with ActionBar); title + framework-drawn up arrow via actionBar.setTitle /
+  setDisplayHomeAsUpEnabled; up handled in onOptionsItemSelected(android.R.id.home).
+- Removed the hand-drawn BackArrowView and custom header row. Body stays native views.
+- Verified: ActionBar shows "Music Wrapped" + "Navigate up" node; tapping up returns to
+  ReVanced > Miscellaneous; body numbers unchanged; no crashes.
+- Tooling: fixed local signing keystore (BKS, required by ReVanced's ApkSigner) at
+  ../wrapped.keystore -> `adb install -r` now works across rebuilds (no more uninstall).
