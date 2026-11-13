@@ -1,20 +1,20 @@
 package app.revanced.extension.music.stats;
 
-import android.app.ActionBar;
 import android.app.Activity;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsetsController;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -48,22 +48,21 @@ public final class WrappedReportActivity extends Activity {
         getWindow().setStatusBarColor(BACKGROUND);
         getWindow().setNavigationBarColor(BACKGROUND);
 
-        // Native header: platform ActionBar with framework-drawn up arrow.
-        ActionBar actionBar = getActionBar();
-        if (actionBar != null) {
-            actionBar.setTitle("Music Wrapped");
-            actionBar.setDisplayHomeAsUpEnabled(true);
-            actionBar.setElevation(0);
-            actionBar.setBackgroundDrawable(new ColorDrawable(BACKGROUND));
-        }
-
         content = new FrameLayout(this);
         content.setBackgroundColor(BACKGROUND);
         content.addView(new ProgressBar(this), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER));
-        setContentView(content);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BACKGROUND);
+        root.addView(buildHeader(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        root.addView(content, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        setContentView(root);
         setLightSystemBarIcons(false);
 
         Utils.runOnBackgroundThread(() -> {
@@ -79,13 +78,56 @@ public final class WrappedReportActivity extends Activity {
         });
     }
 
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == android.R.id.home) {
-            finish();
-            return true;
+    /**
+     * Header matching the app's own screen header metrics:
+     * 48dp tall, 56dp back touch area with a 24dp framework up arrow,
+     * 20sp sans-serif-medium title starting at 72dp.
+     */
+    private View buildHeader() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setBackgroundColor(BACKGROUND);
+
+        FrameLayout back = new FrameLayout(this);
+        back.setContentDescription("Navigate up");
+        back.setClickable(true);
+        back.setFocusable(true);
+        back.setOnClickListener(v -> finish());
+
+        ImageView arrow = new ImageView(this);
+        Drawable icon = resolveUpArrow();
+        if (icon != null) {
+            icon = icon.mutate();
+            icon.setTint(Color.WHITE);
+            arrow.setImageDrawable(icon);
         }
-        return super.onOptionsItemSelected(item);
+        back.addView(arrow, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
+        bar.addView(back, new LinearLayout.LayoutParams(dp(56), ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TextView title = new TextView(this);
+        title.setText("Music Wrapped");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        titleParams.setMarginStart(dp(16));
+        bar.addView(title, titleParams);
+
+        return bar;
+    }
+
+    private Drawable resolveUpArrow() {
+        try {
+            TypedValue value = new TypedValue();
+            if (getTheme().resolveAttribute(android.R.attr.homeAsUpIndicator, value, true)) {
+                return getDrawable(value.resourceId);
+            }
+        } catch (Exception ex) {
+            Logger.printException(() -> "Could not resolve up arrow", ex);
+        }
+        return null;
     }
 
     private void showReport(WrappedReport.Data data) {
@@ -158,12 +200,12 @@ public final class WrappedReportActivity extends Activity {
         TextView plays = new TextView(this);
         plays.setText(data.plays + (data.plays == 1 ? " session played" : " sessions played"));
         plays.setTextColor(Color.WHITE);
-        plays.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        plays.setTypeface(Typeface.DEFAULT_BOLD);
+        plays.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        plays.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         card.addView(plays);
 
         card.addView(dimText(data.tracks + " tracks \u2022 " + data.artists + " artists \u2022 "
-                + data.activeDays + " active days", 12));
+                + data.activeDays + " active days", 14));
 
         column.addView(card, topMargin(matchWidth(), dp(8)));
     }
@@ -173,7 +215,7 @@ public final class WrappedReportActivity extends Activity {
         view.setText(title);
         view.setTextColor(ACCENT);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        view.setTypeface(Typeface.DEFAULT_BOLD);
+        view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         column.addView(view, topMargin(matchWidth(), dp(16)));
     }
 
@@ -292,13 +334,13 @@ public final class WrappedReportActivity extends Activity {
         TextView titleView = new TextView(this);
         titleView.setText(title);
         titleView.setTextColor(Color.WHITE);
-        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        titleView.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         titleView.setMaxLines(1);
         titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         row.addView(titleView);
 
-        row.addView(dimText(subtitle, 12));
+        row.addView(dimText(subtitle, 14));
         return row;
     }
 

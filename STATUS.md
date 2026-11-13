@@ -222,3 +222,14 @@ Manager JsonSource ReVancedAsset schema verified from Manager source).
   ReVanced > Miscellaneous; body numbers unchanged; no crashes.
 - Tooling: fixed local signing keystore (BKS, required by ReVanced's ApkSigner) at
   ../wrapped.keystore -> `adb install -r` now works across rebuilds (no more uninstall).
+
+## SESSION 8 — HEADER PIXEL-MATCHED TO APP (Nov 13)
+Measured the app's own Settings header from the emulator (screenshots + uiautomator):
+- header band y=128..254 (48dp), back touch area x0..147 (56dp wide), 24dp framework arrow,
+  title left edge at 189px (72dp), title glyphs y173..221 (20sp, Roboto Medium).
+Rebuilt the Wrapped header to those metrics:
+- 48dp bar, 56dp back area with ImageView using ?android:attr/homeAsUpIndicator (tinted white),
+  title 20sp "sans-serif-medium" at 72dp.
+Result (measured identically): arrow x53..93 y170..210, title x193 y173..221 -> matches app
+within 1-3px (was 56dp bar => title 11px too low, ActionBar default 22sp regular).
+Body typography aligned to app defaults: 16sp primary, 14sp secondary, medium section titles.

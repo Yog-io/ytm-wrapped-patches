@@ -48,7 +48,7 @@ private val wrappedReportActivityPatch = resourcePatch(
                 document.createElement("activity").apply {
                     setAttribute("android:name", WRAPPED_ACTIVITY_CLASS)
                     setAttribute("android:exported", "false")
-                    setAttribute("android:theme", "@android:style/Theme.Material")
+                    setAttribute("android:theme", "@android:style/Theme.Material.NoActionBar")
                     setAttribute(
                         "android:configChanges",
                         "orientation|screenSize|screenLayout|keyboardHidden",
