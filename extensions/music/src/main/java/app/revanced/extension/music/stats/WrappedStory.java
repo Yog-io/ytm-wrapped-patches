@@ -67,13 +67,13 @@ final class WrappedStory {
     static java.util.List<View> buildCards(Activity activity, WrappedReport.Data data) {
         Context context = activity;
         java.util.List<View> cards = new java.util.ArrayList<>();
-        cards.add(WrappedSections.heroCard(context, data));
-        cards.add(WrappedSections.artistsCard(context, data));
-        cards.add(WrappedSections.songsCard(context, data));
-        cards.add(WrappedSections.statsCard(context, data));
-        cards.add(WrappedSections.clockCard(context, data));
-        cards.add(WrappedSections.weekCard(context, data));
-        cards.add(WrappedSections.outroCard(context, data));
+        cards.add(WrappedSections.introCard(context, data));
+        cards.add(WrappedSections.monthsCard(context, data));
+        cards.add(WrappedSections.artistCard(context, data));
+        cards.add(WrappedSections.songCard(context, data));
+        cards.add(WrappedSections.discoveryCard(context, data));
+        cards.add(WrappedSections.rhythmCard(context, data));
+        cards.add(WrappedSections.posterCard(context, data));
         return cards;
     }
 
@@ -155,11 +155,22 @@ final class WrappedStory {
      * glass rather than a flat card.
      */
     static GradientDrawable frost(Context context, int radiusDp) {
-        GradientDrawable drawable = new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x30FFFFFF, 0x12FFFFFF, 0x1AFFFFFF});
+        // Flat frost: one even sheet of translucent white and a hairline edge.
+        // No highlight, no bulge, no glow.
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(0x1FFFFFFF);
         drawable.setCornerRadius(dp(context, radiusDp));
-        drawable.setStroke(dp(context, 1), 0x3DFFFFFF);
+        drawable.setStroke(dp(context, 1), 0x33FFFFFF);
+        return drawable;
+    }
+
+    /** A dim glass tile used while the real cover is still being found. */
+    static GradientDrawable placeholder(Context context, int accent, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{0xFF1C1C1E, 0xFF141416});
+        drawable.setCornerRadius(dp(context, radiusDp));
+        drawable.setStroke(dp(context, 1), 0x26FFFFFF);
         return drawable;
     }
 
@@ -185,6 +196,115 @@ final class WrappedStory {
         view.setLayoutParams(new LinearLayout.LayoutParams(
                 dp(context, widthDp), ViewGroup.LayoutParams.WRAP_CONTENT));
         return view;
+    }
+
+    /** Flexible spacer that pushes the next view to the bottom. */
+    static View weightedSpace(Context context) {
+        View view = new View(context);
+        view.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        return view;
+    }
+
+    /**
+     * Counts a number up from zero, fast at first and landing on the final value,
+     * the way Replay reveals its headline figures.
+     */
+    static void countUpMinutes(TextView view, long minutes) {
+        android.animation.ValueAnimator animator =
+                android.animation.ValueAnimator.ofFloat(0f, (float) minutes);
+        animator.setDuration(1500);
+        animator.setInterpolator(new android.view.animation.DecelerateInterpolator(2.2f));
+        animator.addUpdateListener(value -> {
+            long current = (long) (float) value.getAnimatedValue();
+            view.setText(WrappedReport.minutes(current * 60_000));
+        });
+        animator.start();
+    }
+
+    /**
+     * Counts a headline figure up from zero, landing hard on the final digit.
+     * The number is grouped the way Apple groups it: "1,05,000".
+     */
+    static void countUpNumber(View view, long target, String suffix, boolean haptic) {
+        android.animation.ValueAnimator animator =
+                android.animation.ValueAnimator.ofFloat(0f, (float) target);
+        animator.setDuration(1500);
+        animator.setStartDelay(250);
+        animator.setInterpolator(new android.view.animation.DecelerateInterpolator(2.2f));
+        animator.addUpdateListener(value -> {
+            long current = (long) (float) value.getAnimatedValue();
+            android.widget.TextView text = (android.widget.TextView) view;
+            text.setText(group(current) + (suffix == null ? "" : suffix));
+        });
+        animator.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                if (haptic) tap(view);
+            }
+        });
+        animator.start();
+    }
+
+    /** Groups a number the way Apple does: 1,05,000 rather than 105,000. */
+    static String group(long value) {
+        String digits = Long.toString(Math.abs(value));
+        if (digits.length() <= 3) return digits;
+        StringBuilder out = new StringBuilder();
+        int head = digits.length() - 3;
+        int rest = head % 2;
+        if (rest != 0) {
+            out.append(digits, 0, rest);
+            out.append(',');
+            head -= rest;
+        }
+        for (int i = 0; i < head; i += 2) {
+            out.append(digits, rest + i, rest + i + 2).append(',');
+        }
+        out.append(digits, digits.length() - 3, digits.length());
+        return out.toString();
+    }
+
+    /** A short physical tap, the way Replay anchors a moment. */
+    static void tap(View view) {
+        try {
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** The artwork springs into place when the screen appears. */
+    static void reveal(View view) {
+        view.setScaleX(0.8f);
+        view.setScaleY(0.8f);
+        view.setAlpha(0f);
+        view.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(520)
+                .setInterpolator(new android.view.animation.OvershootInterpolator(1.1f))
+                .start();
+    }
+
+    /** A slow, endless drift so the artwork never feels still. */
+    static void kenBurns(View view) {
+        android.animation.ValueAnimator animator =
+                android.animation.ValueAnimator.ofFloat(1f, 1.05f);
+        animator.setDuration(10_000);
+        animator.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        animator.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+        animator.addUpdateListener(value -> {
+            float scale = (float) value.getAnimatedValue();
+            view.setScaleX(scale);
+            view.setScaleY(scale);
+        });
+        animator.start();
+    }
+
+    /** The poster panel: a thick sheet of glass with a hairline specular edge. */
+    static GradientDrawable posterGlass(Context context) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(0x1AFFFFFF);
+        drawable.setCornerRadius(dp(context, 24));
+        drawable.setStroke(dp(context, 1), 0x33FFFFFF);
+        return drawable;
     }
 
     static View space(Context context, int heightDp) {

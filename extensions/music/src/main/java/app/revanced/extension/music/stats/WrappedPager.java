@@ -2,6 +2,7 @@ package app.revanced.extension.music.stats;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -14,11 +15,13 @@ import java.util.List;
 
 /**
  * Card host: one full-screen card at a time, with a thin progress bar and a
- * page counter. Tap the right side to advance, the left to go back, or swipe.
+ * page counter.
+ *
+ * <p>Paging works like Apple Replay: taps only, at the edges. Horizontal
+ * swiping is deliberately ignored so a stray drag never scrubs the screen.
  */
 final class WrappedPager extends FrameLayout {
     private static final int TAP_SLOP_DP = 12;
-    private static final int SWIPE_DP = 44;
 
     private final List<View> cards;
     private final LinearLayout segments;
@@ -35,8 +38,9 @@ final class WrappedPager extends FrameLayout {
         segments = new LinearLayout(context);
         segments.setOrientation(LinearLayout.HORIZONTAL);
 
-        for (View card : cards) {
-            card.setVisibility(cards.indexOf(card) == 0 ? VISIBLE : GONE);
+        for (int i = 0; i < cards.size(); i++) {
+            View card = cards.get(i);
+            card.setVisibility(i == 0 ? VISIBLE : GONE);
             addView(card, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
@@ -58,18 +62,33 @@ final class WrappedPager extends FrameLayout {
 
         for (int i = 0; i < cards.size(); i++) {
             View segment = new View(context);
-            segment.setBackgroundColor(Color.parseColor("#3A3A3C"));
+            segment.setBackground(segmentDrawable(false));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(3), 1f);
-            params.setMarginEnd(dp(4));
+            params.setMarginEnd(dp(2));
             segments.addView(segment, params);
         }
         updateChrome();
+
+        // The first screen plays its reveal as soon as it is on screen.
+        post(() -> {
+            Object tag = cards.get(0).getTag();
+            if (tag instanceof WrappedSections.Entry) {
+                ((WrappedSections.Entry) tag).onEnter();
+            }
+        });
+    }
+
+    /** A progress segment: 3pt tall, fully rounded, white or a dimmed white. */
+    private GradientDrawable segmentDrawable(boolean active) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(active ? Color.WHITE : Color.argb(77, 255, 255, 255));
+        drawable.setCornerRadius(dp(2));
+        return drawable;
     }
 
     private void updateChrome() {
         for (int i = 0; i < segments.getChildCount(); i++) {
-            segments.getChildAt(i).setBackgroundColor(
-                    i <= index ? Color.WHITE : Color.parseColor("#3A3A3C"));
+            segments.getChildAt(i).setBackground(segmentDrawable(i <= index));
         }
         counter.setText(String.format(java.util.Locale.US, "%02d / %02d",
                 index + 1, cards.size()));
@@ -85,9 +104,7 @@ final class WrappedPager extends FrameLayout {
             case MotionEvent.ACTION_UP: {
                 float dx = event.getX() - downX;
                 float dy = event.getY() - downY;
-                if (Math.abs(dx) > dp(SWIPE_DP) && Math.abs(dx) > Math.abs(dy)) {
-                    if (dx < 0) next(); else previous();
-                } else if (Math.abs(dx) < dp(TAP_SLOP_DP) && Math.abs(dy) < dp(TAP_SLOP_DP)) {
+                if (Math.abs(dx) < dp(TAP_SLOP_DP) && Math.abs(dy) < dp(TAP_SLOP_DP)) {
                     if (event.getX() < getWidth() * 0.3f) previous(); else next();
                 }
                 return true;
@@ -112,11 +129,14 @@ final class WrappedPager extends FrameLayout {
         int sign = forward ? 1 : -1;
 
         incoming.setVisibility(VISIBLE);
-        incoming.setTranslationX(sign * width);
-        incoming.setAlpha(0.85f);
-        incoming.animate().translationX(0f).alpha(1f).setDuration(240).start();
+        incoming.setTranslationX(sign * width * 0.18f);
+        incoming.setAlpha(0f);
+        // The mesh gradient cross-fades over half a second.
+        incoming.animate().translationX(0f).alpha(1f).setDuration(500)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.4f)).start();
 
-        outgoing.animate().translationX(-sign * width).alpha(0f).setDuration(240)
+        outgoing.animate().translationX(-sign * width * 0.12f).alpha(0f).setDuration(500)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.4f))
                 .withEndAction(() -> {
                     outgoing.setVisibility(GONE);
                     outgoing.setTranslationX(0f);
@@ -125,6 +145,17 @@ final class WrappedPager extends FrameLayout {
 
         index = target;
         updateChrome();
+
+        // A light tap marks the moment the screen changes.
+        try {
+            performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
+        } catch (Throwable ignored) {
+        }
+
+        Object tag = incoming.getTag();
+        if (tag instanceof WrappedSections.Entry) {
+            ((WrappedSections.Entry) tag).onEnter();
+        }
     }
 
     private int dp(int value) {

@@ -1,451 +1,655 @@
 package app.revanced.extension.music.stats;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import java.util.List;
+import java.util.Locale;
 
 /**
- * The report cards. Each card is a full-screen surface with its own artwork-like
- * backdrop, in the style of Apple Music Replay: bold headline, quiet grey
- * supporting copy, tinted artwork tiles and large figures.
+ * The Replay screens.
+ *
+ * <p>Structure follows Apple Music Replay: a moving mesh gradient sampled from the
+ * artwork, one hero square of cover art, an oversized number that counts up, and
+ * a quiet line of copy anchored to the bottom.
  */
 final class WrappedSections {
     private WrappedSections() {}
 
-    /** A full-screen card: aurora backdrop plus a padded content column. */
-    static FrameLayout card(Context context, int primary, int secondary, int tertiary) {
+    /** A screen that animates itself when it is shown. */
+    interface Entry {
+        void onEnter();
+    }
+
+    /** Notified once the artwork of a tile is known. */
+    interface Art {
+        void onBitmap(Bitmap bitmap);
+    }
+
+    static void setEntry(View card, Entry entry) {
+        card.setTag(entry);
+    }
+
+    // --------------------------------------------------------------- chrome
+
+    /** A screen: mesh backdrop, and the three anchored planes of the layout. */
+    static FrameLayout card(Context context) {
         FrameLayout root = new FrameLayout(context);
-        WrappedStory.AuroraDrawable aurora =
-                new WrappedStory.AuroraDrawable(primary, secondary, tertiary);
-        root.setBackground(aurora);
+        root.setBackgroundColor(0xFF000000);
 
-        // A blurred copy of the artwork sits under the panels: that is what gives
-        // the cards their frosted depth instead of a flat colour.
-        View blurred = new View(context);
-        blurred.setBackground(aurora);
-        if (android.os.Build.VERSION.SDK_INT >= 31) {
-            blurred.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(
-                    WrappedStory.dp(context, 46), WrappedStory.dp(context, 46),
-                    android.graphics.Shader.TileMode.CLAMP));
-        }
-        root.addView(blurred, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout column = new LinearLayout(context);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setPadding(WrappedStory.dp(context, 22), WrappedStory.dp(context, 26),
-                WrappedStory.dp(context, 22), WrappedStory.dp(context, 34));
-        root.addView(column, new FrameLayout.LayoutParams(
+        MeshBackdrop mesh = new MeshBackdrop(context);
+        root.addView(mesh, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         return root;
     }
 
-    /** Child 0 is the blurred backdrop, child 1 is the content column. */
-    private static LinearLayout columnOf(FrameLayout card) {
-        return (LinearLayout) card.getChildAt(1);
+    /** Small uppercase label, wide tracking, quiet white. */
+    private static TextView eyebrow(Context context, String value) {
+        TextView view = WrappedStory.text(context, value.toUpperCase(Locale.US), 13,
+                0x99FFFFFF, Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        view.setLetterSpacing(0.08f);
+        return view;
     }
 
-    private static void heading(LinearLayout column, String title, String subtitle) {
-        column.addView(WrappedStory.title(column.getContext(), title));
-        column.addView(WrappedStory.space(column.getContext(), 6));
-        column.addView(WrappedStory.sub(column.getContext(), subtitle));
-        column.addView(WrappedStory.space(column.getContext(), 22));
+    /** A data label inside the poster card: caps, wide tracking, dim. */
+    private static TextView dataLabel(Context context, String value) {
+        TextView view = WrappedStory.text(context, value.toUpperCase(Locale.US), 11,
+                0x8CFFFFFF, Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        view.setLetterSpacing(0.14f);
+        return view;
     }
 
-    // ------------------------------------------------------------------ hero
-
-    static View heroCard(Context context, WrappedReport.Data data) {
-        FrameLayout card = card(context, WrappedStory.INDIGO, WrappedStory.PINK,
-                WrappedStory.BLUE);
-        LinearLayout column = columnOf(card);
-
-        heading(column, "Your Music Wrapped", "Everything you played, in one place.");
-
-        LinearLayout hero = WrappedStory.surface(context);
-        hero.setGravity(Gravity.CENTER_HORIZONTAL);
-        hero.setPadding(WrappedStory.dp(context, 22), WrappedStory.dp(context, 38),
-                WrappedStory.dp(context, 22), WrappedStory.dp(context, 38));
-        hero.setBackground(WrappedStory.heroGradient(context, WrappedStory.PURPLE));
-        hero.addView(WrappedStory.big(context, WrappedReport.minutes(data.totalMs), 52));
-        hero.addView(WrappedStory.space(context, 8));
-        hero.addView(WrappedStory.text(context, "of music, start to finish", 18,
-                0xE6FFFFFF, Typeface.create("sans-serif", Typeface.NORMAL)));
-        column.addView(hero);
-
-        column.addView(WrappedStory.space(context, 14));
-        LinearLayout tiles = new LinearLayout(context);
-        tiles.setOrientation(LinearLayout.HORIZONTAL);
-        tiles.addView(statTile(context, String.valueOf(data.plays), "times you\nplayed",
-                WrappedStory.PINK), weight());
-        tiles.addView(WrappedStory.gap(context, 12));
-        tiles.addView(statTile(context, String.valueOf(data.tracks), "songs you\nheard",
-                WrappedStory.BLUE), weight());
-        tiles.addView(WrappedStory.gap(context, 12));
-        tiles.addView(statTile(context, String.valueOf(data.activeDays), "days you\nlistened",
-                WrappedStory.TEAL), weight());
-        column.addView(tiles, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        column.addView(WrappedStory.space(context, 14));
-        column.addView(keyValue(context, "On average, you listened for",
-                WrappedReport.compact(data.avgSessionMs)));
-
-        return card;
+    /** The eyebrow, anchored to the top of the screen. */
+    private static void topLabel(FrameLayout root, Context context, String value) {
+        TextView view = eyebrow(context, value);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP);
+        params.setMargins(dp(context, 24), dp(context, 46), dp(context, 24), 0);
+        root.addView(view, params);
     }
 
-    // --------------------------------------------------------------- artists
+    /** The body of a screen, centred in the space between the label and the copy. */
+    private static LinearLayout body(FrameLayout root, Context context, boolean top) {
+        LinearLayout body = new LinearLayout(context);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setGravity(Gravity.CENTER_HORIZONTAL);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                top ? Gravity.TOP : Gravity.CENTER_VERTICAL);
+        params.setMargins(dp(context, 24), top ? dp(context, 84) : dp(context, 76),
+                dp(context, 24), dp(context, 34));
+        root.addView(body, params);
+        return body;
+    }
 
-    static View artistsCard(Context context, WrappedReport.Data data) {
-        FrameLayout card = card(context, WrappedStory.PINK, WrappedStory.INDIGO,
-                WrappedStory.PURPLE);
-        LinearLayout column = columnOf(card);
+    /** The closing line, anchored to the bottom of the screen. */
+    private static void bottomCopy(FrameLayout root, Context context, String value) {
+        TextView view = WrappedStory.text(context, value, 17, 0xB3FFFFFF,
+                Typeface.create("sans-serif", Typeface.NORMAL));
+        view.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM);
+        params.setMargins(dp(context, 24), 0, dp(context, 24), dp(context, 34));
+        root.addView(view, params);
+    }
 
-        heading(column, "Your top artists", "The voices you kept coming back to.");
+    private static void applyPalette(FrameLayout root, Bitmap bitmap) {
+        if (bitmap == null) return;
+        List<Integer> colors = Palette.fromBitmap(bitmap);
+        if (colors.isEmpty()) return;
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View child = root.getChildAt(i);
+            if (child instanceof MeshBackdrop) ((MeshBackdrop) child).setColors(colors);
+        }
+    }
+
+    private static void startDrift(FrameLayout root) {
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View child = root.getChildAt(i);
+            if (child instanceof MeshBackdrop) ((MeshBackdrop) child).startDrift();
+        }
+    }
+
+    /**
+     * The hero square of cover art: 1:1, rounded, floating on the mesh, with the
+     * real cover replacing the monogram as soon as it is known.
+     */
+    private static FrameLayout artTile(Context context, String url, String artist, String title,
+                                       String monogram, int accent, int sizePx, Art art) {
+        FrameLayout frame = new FrameLayout(context);
+        // Until the real cover arrives: a dim glass tile, never a flat colour block.
+        frame.setBackground(WrappedStory.placeholder(context, accent, 16));
+
+        TextView letter = WrappedStory.text(context, monogram, sizePx > dp(context, 120) ? 34 : 18,
+                accent, Typeface.create("sans-serif", Typeface.BOLD));
+        letter.setGravity(Gravity.CENTER);
+        frame.addView(letter, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        ImageView image = new ImageView(context);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, android.graphics.Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(context, 16));
+            }
+        });
+        image.setClipToOutline(true);
+        frame.addView(image, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        if (url != null && !url.isEmpty()) {
+            Thumbnails.load(image, url, bitmap -> {
+                if (art != null) art.onBitmap(bitmap);
+            });
+        } else if (artist != null && !artist.isEmpty()) {
+            final String trackTitle = title;
+            ArtworkResolver.Callback callback = resolved -> {
+                Thumbnails.load(image, resolved);
+                ListeningDatabase database = ListeningDatabase.getInstance();
+                if (trackTitle != null && !trackTitle.isEmpty()) {
+                    database.updateArtworkByName(trackTitle, artist, resolved);
+                } else {
+                    database.setArtistArtwork(artist, resolved);
+                }
+            };
+            if (title != null && !title.isEmpty()) {
+                ArtworkResolver.resolveTrack(artist, title, callback);
+            } else {
+                ArtworkResolver.resolveArtist(artist, callback);
+            }
+        }
+
+        frame.setLayoutParams(new LinearLayout.LayoutParams(sizePx, sizePx));
+        frame.setElevation(dp(context, 18));
+        return frame;
+    }
+
+    private static int dp(Context context, int value) {
+        return (int) (value * context.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** The best known song to put on the cover: the top one that has artwork. */
+    private static WrappedReport.Track coverTrack(WrappedReport.Data data) {
+        for (WrappedReport.Track track : data.topTracks) {
+            if (track.artworkUrl != null && !track.artworkUrl.isEmpty()) return track;
+        }
+        return data.topTracks.isEmpty() ? null : data.topTracks.get(0);
+    }
+
+    private static int screenWidth(Context context) {
+        return context.getResources().getDisplayMetrics().widthPixels;
+    }
+
+    // ------------------------------------------------------------ 01 · intro
+
+    static View introCard(Context context, WrappedReport.Data data) {
+        FrameLayout root = card(context);
+        topLabel(root, context, "Your year in music");
+        LinearLayout body = body(root, context, false);
+
+        WrappedReport.Track cover = coverTrack(data);
+        String artUrl = cover == null ? null : cover.artworkUrl;
+        String artArtist = cover == null ? null : cover.artist;
+        String artTitle = cover == null ? null : cover.title;
+        String monogram = cover == null ? "♪" : WrappedStory.monogram(cover.title);
+        int size = (int) (screenWidth(context) * 0.58f);
+
+        FrameLayout art = artTile(context, artUrl, artArtist, artTitle, monogram,
+                WrappedStory.INDIGO, size, bitmap -> applyPalette(root, bitmap));
+        body.addView(art);
+
+        body.addView(WrappedStory.space(context, 26));
+        TextView total = WrappedStory.text(context, "0", 76, 0xFFFFFFFF,
+                Typeface.create("sans-serif", Typeface.BOLD));
+        total.setLetterSpacing(-0.02f);
+        total.setGravity(Gravity.CENTER);
+        body.addView(total);
+
+        body.addView(WrappedStory.space(context, 4));
+        TextView caption = WrappedStory.text(context, "minutes listened", 20, 0x99FFFFFF,
+                Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        caption.setGravity(Gravity.CENTER);
+        body.addView(caption);
+
+        bottomCopy(root, context, "Your year in music started with "
+                + WrappedStory.group(data.totalMs / 60_000) + " total minutes.");
+
+        startDrift(root);
+        setEntry(root, () -> {
+            WrappedStory.reveal(art);
+            WrappedStory.kenBurns(art);
+            WrappedStory.countUpNumber(total, data.totalMs / 60_000, "", true);
+        });
+        return root;
+    }
+
+    // ------------------------------------------------------ 02 · month by month
+
+    static View monthsCard(Context context, WrappedReport.Data data) {
+        FrameLayout root = card(context);
+        topLabel(root, context, "Your year, month by month");
+        LinearLayout body = body(root, context, true);
+
+        if (data.monthlyArtists.isEmpty()) {
+            body.addView(WrappedStory.big(context, "Not enough data yet", 30));
+            return root;
+        }
+
+        int shown = Math.min(6, data.monthlyArtists.size());
+        for (int i = data.monthlyArtists.size() - shown; i < data.monthlyArtists.size(); i++) {
+            LinearLayout row = new LinearLayout(context);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(context, 16), dp(context, 12), dp(context, 16), dp(context, 12));
+            row.setBackground(WrappedStory.frost(context, 16));
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rowParams.bottomMargin = dp(context, 8);
+            body.addView(row, rowParams);
+
+            TextView label = WrappedStory.text(context, monthLabel(data.monthlyArtists.get(i)), 13,
+                    0x99FFFFFF, Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(dp(context, 64),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            labelParams.rightMargin = dp(context, 14);
+            row.addView(label, labelParams);
+
+            TextView name = WrappedStory.text(context, data.monthlyArtistNames.get(i), 16, 0xFFFFFFFF,
+                    Typeface.create("sans-serif", Typeface.BOLD));
+            name.setMaxLines(1);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.addView(name, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+
+        String lead;
+        if (data.topArtistMonths > 1) {
+            lead = data.topArtists.isEmpty()
+                    ? "Your top artist led for " + data.topArtistMonths + " months."
+                    : data.topArtists.get(0).name + " was your top artist for "
+                    + data.topArtistMonths + " months.";
+        } else {
+            lead = "Your listening changed shape as the year went on.";
+        }
+        bottomCopy(root, context, lead);
+
+        startDrift(root);
+        return root;
+    }
+
+    // --------------------------------------------------------- 03 · top artist
+
+    static View artistCard(Context context, WrappedReport.Data data) {
+        FrameLayout root = card(context);
+        topLabel(root, context, "Your top artist");
+        LinearLayout body = body(root, context, false);
 
         if (data.topArtists.isEmpty()) {
-            column.addView(WrappedStory.sub(context, "Nothing yet."));
-            return card;
+            body.addView(WrappedStory.big(context, "No artists yet", 34));
+            return root;
         }
 
         WrappedReport.Artist top = data.topArtists.get(0);
-        int accent = WrappedStory.tintFor(top.name);
+        int size = (int) (screenWidth(context) * 0.5f);
+        FrameLayout art = artTile(context, top.artworkUrl, top.name, null,
+                WrappedStory.monogram(top.name), WrappedStory.tintFor(top.name), size,
+                bitmap -> applyPalette(root, bitmap));
+        body.addView(art);
 
-        LinearLayout hero = WrappedStory.surface(context);
-        hero.setBackground(WrappedStory.heroGradient(context, accent));
-        hero.setGravity(Gravity.CENTER_HORIZONTAL);
-        hero.setPadding(WrappedStory.dp(context, 18), WrappedStory.dp(context, 22),
-                WrappedStory.dp(context, 18), WrappedStory.dp(context, 22));
-        hero.addView(WrappedStory.text(context, "You had one artist on repeat", 15,
-                0xE6FFFFFF, Typeface.create("sans-serif", Typeface.NORMAL)));
-        hero.addView(WrappedStory.space(context, 8));
-        hero.addView(WrappedStory.big(context, top.name, 34));
-        hero.addView(WrappedStory.space(context, 8));
-        hero.addView(WrappedStory.text(context, Math.round(data.topArtistShare * 100)
-                + "% of your listening went to them", 15, 0xCCFFFFFF,
-                Typeface.create("sans-serif", Typeface.NORMAL)));
-        column.addView(hero);
+        body.addView(WrappedStory.space(context, 24));
+        TextView name = WrappedStory.text(context, top.name, 36, 0xFFFFFFFF,
+                Typeface.create("sans-serif", Typeface.BOLD));
+        name.setLetterSpacing(-0.01f);
+        name.setGravity(Gravity.CENTER);
+        name.setMaxLines(2);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        body.addView(name);
 
-        column.addView(WrappedStory.space(context, 20));
-        HorizontalScrollView rail = new HorizontalScrollView(context);
-        rail.setHorizontalScrollBarEnabled(false);
-        LinearLayout row = new LinearLayout(context);
-        row.setOrientation(LinearLayout.HORIZONTAL);
+        body.addView(WrappedStory.space(context, 6));
+        TextView listened = WrappedStory.text(context,
+                "You listened to them for " + WrappedReport.minutes(top.listenedMs) + ".",
+                17, 0x99FFFFFF, Typeface.create("sans-serif", Typeface.NORMAL));
+        listened.setGravity(Gravity.CENTER);
+        body.addView(listened);
 
-        for (WrappedReport.Artist artist : data.topArtists) {
-            LinearLayout tile = new LinearLayout(context);
-            tile.setOrientation(LinearLayout.VERTICAL);
-            tile.setGravity(Gravity.CENTER_HORIZONTAL);
+        bottomCopy(root, context, data.topArtistMonths > 1
+                ? "They led your listening for " + data.topArtistMonths + " months."
+                : "You consistently returned to " + top.name + ".");
 
-            tile.addView(WrappedStory.artworkView(context, artist.artworkUrl,
-                    artist.name, null, WrappedStory.monogram(artist.name),
-                    WrappedStory.tintFor(artist.name), 104, true));
-
-            tile.addView(WrappedStory.space(context, 10));
-            TextView name = WrappedStory.text(context, artist.name, 14, WrappedStory.TEXT,
-                    Typeface.create("sans-serif", Typeface.BOLD));
-            name.setGravity(Gravity.CENTER);
-            name.setMaxLines(1);
-            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            tile.addView(name);
-
-            TextView amount = WrappedStory.caption(context, WrappedReport.minutes(artist.listenedMs));
-            amount.setGravity(Gravity.CENTER);
-            tile.addView(amount);
-
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    WrappedStory.dp(context, 124), ViewGroup.LayoutParams.WRAP_CONTENT);
-            params.setMarginEnd(WrappedStory.dp(context, 12));
-            row.addView(tile, params);
-        }
-
-        rail.addView(row);
-        column.addView(rail, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        column.addView(WrappedStory.space(context, 20));
-        if (data.topArtistTrack != null) {
-            column.addView(keyValue(context, "Their song you kept on", data.topArtistTrack));
-        }
-        column.addView(WrappedStory.space(context, 10));
-        column.addView(keyValue(context, "Then came",
-                data.topArtists.size() > 1 ? data.topArtists.get(1).name : "—"));
-
-        return card;
+        startDrift(root);
+        setEntry(root, () -> {
+            WrappedStory.reveal(art);
+            WrappedStory.kenBurns(art);
+        });
+        return root;
     }
 
-    // ----------------------------------------------------------------- songs
+    // ---------------------------------------------------------- 04 · top song
 
-    static View songsCard(Context context, WrappedReport.Data data) {
-        FrameLayout card = card(context, WrappedStory.BLUE, WrappedStory.PURPLE,
-                WrappedStory.INDIGO);
-        LinearLayout column = columnOf(card);
-
-        heading(column, "Your top songs", "The ones you never skipped.");
+    static View songCard(Context context, WrappedReport.Data data) {
+        FrameLayout root = card(context);
+        topLabel(root, context, "You played " + WrappedStory.group(data.plays) + " songs");
+        LinearLayout body = body(root, context, false);
 
         if (data.topTracks.isEmpty()) {
-            column.addView(WrappedStory.sub(context, "Nothing yet."));
-            return card;
+            body.addView(WrappedStory.big(context, "No tracks yet", 34));
+            return root;
         }
 
-        long maxPlays = Math.max(1, data.topTracks.get(0).plays);
-        for (WrappedReport.Track track : data.topTracks) {
-            int accent = WrappedStory.tintFor(track.title);
+        WrappedReport.Track top = coverTrack(data);
+        int size = (int) (screenWidth(context) * 0.5f);
+        FrameLayout art = artTile(context, top.artworkUrl, top.artist, top.title,
+                WrappedStory.monogram(top.title), WrappedStory.tintFor(top.title), size,
+                bitmap -> applyPalette(root, bitmap));
+        body.addView(art);
+
+        body.addView(WrappedStory.space(context, 24));
+        TextView title = WrappedStory.text(context, top.title, 32, 0xFFFFFFFF,
+                Typeface.create("sans-serif", Typeface.BOLD));
+        title.setLetterSpacing(-0.01f);
+        title.setGravity(Gravity.CENTER);
+        title.setMaxLines(2);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        body.addView(title);
+
+        body.addView(WrappedStory.space(context, 6));
+        TextView artist = WrappedStory.text(context,
+                top.artist == null ? "" : top.artist, 20, 0x99FFFFFF,
+                Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        artist.setGravity(Gravity.CENTER);
+        body.addView(artist);
+
+        body.addView(WrappedStory.space(context, 18));
+        TextView plays = WrappedStory.text(context, "0", 52, 0xFFFFFFFF,
+                Typeface.create("sans-serif", Typeface.BOLD));
+        plays.setLetterSpacing(-0.02f);
+        plays.setGravity(Gravity.CENTER);
+        body.addView(plays);
+
+        body.addView(WrappedStory.space(context, 2));
+        TextView playsCaption = WrappedStory.text(context,
+                top.plays == 1 ? "play" : "plays", 15, 0x99FFFFFF,
+                Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        playsCaption.setGravity(Gravity.CENTER);
+        body.addView(playsCaption);
+
+        bottomCopy(root, context, "Your top song was " + top.title + " by "
+                + (top.artist == null ? "—" : top.artist) + ".");
+
+        startDrift(root);
+        setEntry(root, () -> {
+            WrappedStory.reveal(art);
+            WrappedStory.kenBurns(art);
+            WrappedStory.countUpNumber(plays, top.plays, "", true);
+        });
+        return root;
+    }
+
+    // -------------------------------------------------------- 05 · discovery
+
+    static View discoveryCard(Context context, WrappedReport.Data data) {
+        FrameLayout root = card(context);
+        topLabel(root, context, "New to you");
+        LinearLayout body = body(root, context, false);
+
+        TextView count = WrappedStory.text(context, "0", 76, 0xFFFFFFFF,
+                Typeface.create("sans-serif", Typeface.BOLD));
+        count.setLetterSpacing(-0.02f);
+        count.setGravity(Gravity.CENTER);
+        body.addView(count);
+
+        body.addView(WrappedStory.space(context, 2));
+        TextView caption = WrappedStory.text(context,
+                data.newArtistsThisYear == 1 ? "new artist this year" : "new artists this year",
+                20, 0x99FFFFFF, Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        caption.setGravity(Gravity.CENTER);
+        body.addView(caption);
+
+        body.addView(WrappedStory.space(context, 22));
+
+        int shown = Math.min(4, data.newArtists.size());
+        for (int i = 0; i < shown; i++) {
+            WrappedReport.Artist artist = data.newArtists.get(i);
 
             LinearLayout row = new LinearLayout(context);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, WrappedStory.dp(context, 8), 0, WrappedStory.dp(context, 8));
+            row.setPadding(dp(context, 12), dp(context, 10), dp(context, 16), dp(context, 10));
+            row.setBackground(WrappedStory.frost(context, 16));
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rowParams.bottomMargin = dp(context, 8);
+            body.addView(row, rowParams);
 
-            row.addView(WrappedStory.artworkView(context, track.artworkUrl,
-                    track.artist, track.title, WrappedStory.monogram(track.title),
-                    accent, 52, false));
+            int tile = dp(context, 44);
+            FrameLayout thumb = artTile(context, artist.artworkUrl, artist.name, null,
+                    WrappedStory.monogram(artist.name), WrappedStory.tintFor(artist.name), tile,
+                    i == 0 ? bitmap -> applyPalette(root, bitmap) : null);
+            LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(tile, tile);
+            tileParams.rightMargin = dp(context, 14);
+            row.addView(thumb, tileParams);
 
-            LinearLayout names = new LinearLayout(context);
-            names.setOrientation(LinearLayout.VERTICAL);
-            names.setPadding(WrappedStory.dp(context, 14), 0, 0, 0);
-
-            TextView name = WrappedStory.text(context, track.title, 16, WrappedStory.TEXT,
+            TextView name = WrappedStory.text(context, artist.name, 16, 0xFFFFFFFF,
                     Typeface.create("sans-serif", Typeface.BOLD));
             name.setMaxLines(1);
             name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            names.addView(name);
-
-            String detail = (track.artist == null ? "" : track.artist + " · ")
-                    + "played " + track.plays + (track.plays == 1 ? " time" : " times");
-            TextView detailView = WrappedStory.caption(context, detail);
-            detailView.setMaxLines(1);
-            detailView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            names.addView(WrappedStory.space(context, 4));
-            names.addView(detailView);
-
-            row.addView(names, new LinearLayout.LayoutParams(0,
+            row.addView(name, new LinearLayout.LayoutParams(0,
                     ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            column.addView(row);
-
-            column.addView(WrappedStory.meter(context, accent, track.plays / (float) maxPlays),
-                    new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                            WrappedStory.dp(context, 3)));
-            column.addView(WrappedStory.space(context, 12));
         }
 
-        column.addView(WrappedStory.space(context, 4));
-        column.addView(keyValue(context, "Together, your top songs got you",
-                data.topListensPlays + " plays"));
-
-        return card;
-    }
-
-    // ----------------------------------------------------------------- stats
-
-    static View statsCard(Context context, WrappedReport.Data data) {
-        FrameLayout card = card(context, WrappedStory.INDIGO, WrappedStory.CYAN,
-                WrappedStory.BLUE);
-        LinearLayout column = columnOf(card);
-
-        heading(column, "Your listening stats", "The numbers behind the music.");
-
-        LinearLayout first = new LinearLayout(context);
-        first.setOrientation(LinearLayout.HORIZONTAL);
-        first.addView(statTile(context, String.valueOf(data.plays), "plays",
-                WrappedStory.PINK), weight());
-        first.addView(WrappedStory.gap(context, 12));
-        first.addView(statTile(context, String.valueOf(data.tracks), "songs",
-                WrappedStory.BLUE), weight());
-        column.addView(first, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        column.addView(WrappedStory.space(context, 12));
-        LinearLayout second = new LinearLayout(context);
-        second.setOrientation(LinearLayout.HORIZONTAL);
-        second.addView(statTile(context, String.valueOf(data.artists), "artists",
-                WrappedStory.PURPLE), weight());
-        second.addView(WrappedStory.gap(context, 12));
-        second.addView(statTile(context, String.valueOf(data.activeDays), "days",
-                WrappedStory.TEAL), weight());
-        column.addView(second, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        column.addView(WrappedStory.space(context, 14));
-        column.addView(keyValue(context, "On a typical day you listened for",
-                WrappedReport.compact(data.perDayMs)));
-        column.addView(WrappedStory.space(context, 10));
-        column.addView(keyValue(context, "New songs you found this month",
-                String.valueOf(data.discoveries30d)));
-        column.addView(WrappedStory.space(context, 10));
-        column.addView(keyValue(context, "Your longest streak",
-                data.longestStreak + " days"));
-
-        return card;
-    }
-
-    // ----------------------------------------------------------------- clock
-
-    static View clockCard(Context context, WrappedReport.Data data) {
-        FrameLayout card = card(context, WrappedStory.PURPLE, WrappedStory.PINK,
-                WrappedStory.INDIGO);
-        LinearLayout column = columnOf(card);
-
-        heading(column, "You're a " + WrappedStory.hourLabel(data.peakHour) + " person",
-                "That's when you press play the most.");
-
-        LinearLayout surface = WrappedStory.surface(context);
-        surface.addView(WrappedStory.big(context, WrappedStory.hourLabel(data.peakHour), 40));
-        surface.addView(WrappedStory.space(context, 4));
-        surface.addView(WrappedStory.caption(context, "your busiest hour"));
-
-        long max = 1;
-        for (long value : data.listensByHour) max = Math.max(max, value);
-
-        int chartHeight = WrappedStory.dp(context, 110);
-        LinearLayout chart = new LinearLayout(context);
-        chart.setOrientation(LinearLayout.HORIZONTAL);
-        chart.setGravity(Gravity.BOTTOM);
-        for (int hour = 0; hour < 24; hour++) {
-            int height = Math.max(WrappedStory.dp(context, 4),
-                    Math.round(chartHeight * (data.listensByHour[hour] / (float) max)));
-            View bar = new View(context);
-            bar.setBackground(WrappedStory.rounded(context,
-                    hour == data.peakHour ? WrappedStory.PINK : 0x2AFFFFFF, 3));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, height, 1f);
-            params.setMarginEnd(WrappedStory.dp(context, 3));
-            chart.addView(bar, params);
+        String lead;
+        if (!data.comebacks.isEmpty()) {
+            lead = "You came back to " + data.comebacks.get(0) + ".";
+        } else if (data.newArtistsThisYear > 0) {
+            lead = "You discovered " + data.newArtistsThisYear + " new artists this year.";
+        } else {
+            lead = "Your next favourite artist is still out there.";
         }
-        surface.addView(WrappedStory.space(context, 20));
-        surface.addView(chart, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, chartHeight));
+        bottomCopy(root, context, lead);
 
-        LinearLayout axis = new LinearLayout(context);
-        axis.setOrientation(LinearLayout.HORIZONTAL);
-        String[] labels = {"12a", "6a", "12p", "6p", "12a"};
-        for (String label : labels) {
-            axis.addView(WrappedStory.text(context, label, 11, WrappedStory.TEXT3,
-                    Typeface.create("sans-serif", Typeface.NORMAL)),
-                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        }
-        surface.addView(WrappedStory.space(context, 8));
-        surface.addView(axis);
-        column.addView(surface);
-
-        column.addView(WrappedStory.space(context, 12));
-        column.addView(keyValue(context, "That makes you a", data.archetype));
-
-        return card;
+        startDrift(root);
+        setEntry(root, () ->
+                WrappedStory.countUpNumber(count, data.newArtistsThisYear, "", true));
+        return root;
     }
 
-    // ------------------------------------------------------------------ week
+    // ----------------------------------------------------------- 06 · rhythm
 
-    static View weekCard(Context context, WrappedReport.Data data) {
-        FrameLayout card = card(context, WrappedStory.CYAN, WrappedStory.TEAL,
-                WrappedStory.BLUE);
-        LinearLayout column = columnOf(card);
+    static View rhythmCard(Context context, WrappedReport.Data data) {
+        FrameLayout root = card(context);
+        topLabel(root, context, "Your rhythm");
+        LinearLayout body = body(root, context, false);
 
-        heading(column, WrappedStory.DAY_NAMES[data.peakDay] + " is your day",
-                "You listen more on this day than any other.");
+        TextView hour = WrappedStory.text(context, WrappedStory.hourLabel(data.peakHour), 72,
+                0xFFFFFFFF, Typeface.create("sans-serif", Typeface.BOLD));
+        hour.setLetterSpacing(-0.02f);
+        hour.setGravity(Gravity.CENTER);
+        body.addView(hour);
 
-        LinearLayout surface = WrappedStory.surface(context);
-        surface.addView(WrappedStory.big(context, WrappedStory.DAY_NAMES[data.peakDay], 34));
-        surface.addView(WrappedStory.space(context, 4));
-        surface.addView(WrappedStory.caption(context, "your strongest day"));
-        surface.addView(WrappedStory.space(context, 18));
+        body.addView(WrappedStory.space(context, 4));
+        TextView hourCaption = WrappedStory.text(context, "your music peaks here", 20, 0x99FFFFFF,
+                Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        hourCaption.setGravity(Gravity.CENTER);
+        body.addView(hourCaption);
 
-        long max = 1;
-        for (long value : data.listensByDayOfWeek) max = Math.max(max, value);
+        body.addView(WrappedStory.space(context, 22));
 
-        for (int i = 0; i < 7; i++) {
-            long value = data.listensByDayOfWeek[i];
-            boolean peak = i == data.peakDay;
-
-            LinearLayout row = new LinearLayout(context);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.addView(WrappedStory.text(context, WrappedStory.DAY_NAMES[i].substring(0, 3), 14,
-                            peak ? WrappedStory.TEXT : WrappedStory.TEXT2,
-                            Typeface.create("sans-serif", Typeface.NORMAL)),
-                    new LinearLayout.LayoutParams(WrappedStory.dp(context, 38),
-                            ViewGroup.LayoutParams.WRAP_CONTENT));
-            row.addView(WrappedStory.meter(context,
-                            peak ? WrappedStory.INDIGO : 0x2AFFFFFF, value / (float) max),
-                    new LinearLayout.LayoutParams(0, WrappedStory.dp(context, 4), 1f));
-            row.addView(WrappedStory.text(context, String.valueOf(value), 12, WrappedStory.TEXT3,
-                            Typeface.create("sans-serif", Typeface.NORMAL)),
-                    new LinearLayout.LayoutParams(WrappedStory.dp(context, 32),
-                            ViewGroup.LayoutParams.WRAP_CONTENT));
-            surface.addView(row);
-            surface.addView(WrappedStory.space(context, 12));
-        }
-        column.addView(surface);
-
-        column.addView(WrappedStory.space(context, 12));
-        column.addView(keyValue(context, "You listened this many days in a row",
-                data.longestStreak + " days"));
-
-        return card;
-    }
-
-    // ---------------------------------------------------------------- outro
-
-    static View outroCard(Context context, WrappedReport.Data data) {
-        FrameLayout card = card(context, WrappedStory.INDIGO, WrappedStory.PURPLE,
-                WrappedStory.PINK);
-        LinearLayout column = columnOf(card);
-
-        heading(column, "That's your year", "Here's the whole thing.");
-
-        LinearLayout hero = WrappedStory.surface(context);
-        hero.setGravity(Gravity.CENTER_HORIZONTAL);
-        hero.setBackground(WrappedStory.heroGradient(context, WrappedStory.INDIGO));
-        hero.setPadding(WrappedStory.dp(context, 22), WrappedStory.dp(context, 34),
-                WrappedStory.dp(context, 22), WrappedStory.dp(context, 34));
-        hero.addView(WrappedStory.big(context, data.plays + " plays", 44));
-        hero.addView(WrappedStory.space(context, 6));
-        hero.addView(WrappedStory.text(context, data.tracks + " songs · " + data.artists
-                + " artists · " + data.activeDays + " days", 16, 0xE6FFFFFF,
-                Typeface.create("sans-serif", Typeface.NORMAL)));
-        column.addView(hero);
-
-        column.addView(WrappedStory.space(context, 18));
-        column.addView(WrappedStory.text(context,
-                "All of this came from this phone. Nothing was uploaded. Made with ReVanced.",
-                12, WrappedStory.TEXT3, Typeface.create("sans-serif", Typeface.NORMAL)));
-
-        return card;
-    }
-
-    // --------------------------------------------------------------- helpers
-
-    private static LinearLayout statTile(Context context, String value, String label, int accent) {
-        LinearLayout cell = new LinearLayout(context);
-        cell.setOrientation(LinearLayout.VERTICAL);
-        cell.setBackground(WrappedStory.glass(context, WrappedStory.withAlpha(accent, 0x3C), 20));
-        cell.setPadding(WrappedStory.dp(context, 16), WrappedStory.dp(context, 16),
-                WrappedStory.dp(context, 16), WrappedStory.dp(context, 16));
-        cell.addView(WrappedStory.big(context, value, 25));
-        cell.addView(WrappedStory.space(context, 4));
-        cell.addView(WrappedStory.caption(context, label));
-        return cell;
-    }
-
-    /** A label on the left, a value on the right, on a glass row. */
-    private static LinearLayout keyValue(Context context, String label, String value) {
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(context, 18), dp(context, 16), dp(context, 18), dp(context, 16));
         row.setBackground(WrappedStory.frost(context, 18));
-        row.setPadding(WrappedStory.dp(context, 16), WrappedStory.dp(context, 14),
-                WrappedStory.dp(context, 16), WrappedStory.dp(context, 14));
-        row.addView(WrappedStory.caption(context, label), new LinearLayout.LayoutParams(0,
+        body.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView streak = WrappedStory.text(context,
+                data.longestStreak + (data.longestStreak == 1 ? " day" : " days"), 26, 0xFFFFFFFF,
+                Typeface.create("sans-serif", Typeface.BOLD));
+        row.addView(streak);
+
+        TextView streakCaption = WrappedStory.text(context, "in a row", 15, 0x99FFFFFF,
+                Typeface.create("sans-serif", Typeface.NORMAL));
+        streakCaption.setGravity(Gravity.CENTER);
+        row.addView(streakCaption, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        row.addView(WrappedStory.big(context, value, 18));
+
+        bottomCopy(root, context, data.archetypeLine.isEmpty()
+                ? "Your listening has a rhythm of its own."
+                : data.archetypeLine);
+
+        startDrift(root);
+        setEntry(root, () -> WrappedStory.reveal(hour));
+        return root;
+    }
+
+    // ---------------------------------------------------------- 07 · poster
+
+    static View posterCard(Context context, WrappedReport.Data data) {
+        FrameLayout root = card(context);
+        topLabel(root, context, "Your year in one card");
+        LinearLayout body = body(root, context, true);
+
+        LinearLayout poster = new LinearLayout(context);
+        poster.setOrientation(LinearLayout.VERTICAL);
+        poster.setPadding(dp(context, 22), dp(context, 22), dp(context, 22), dp(context, 22));
+        poster.setBackground(WrappedStory.posterGlass(context));
+        body.addView(poster, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView heading = WrappedStory.text(context, "MY YEAR", 12, 0x99FFFFFF,
+                Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        heading.setLetterSpacing(0.2f);
+        poster.addView(heading);
+
+        poster.addView(WrappedStory.space(context, 14));
+
+        poster.addView(figure(context, "Minutes", WrappedStory.group(data.totalMs / 60_000)));
+        poster.addView(WrappedStory.space(context, 10));
+        poster.addView(figure(context, "Songs", WrappedStory.group(data.plays)));
+        poster.addView(WrappedStory.space(context, 10));
+        poster.addView(figure(context, "Artists", WrappedStory.group(data.artists)));
+
+        poster.addView(WrappedStory.space(context, 18));
+        poster.addView(dataLabel(context, "Top artists"));
+
+        int count = Math.min(5, data.topArtists.size());
+        for (int i = 0; i < count; i++) {
+            poster.addView(posterRow(context, String.valueOf(i + 1),
+                    data.topArtists.get(i).name));
+        }
+
+        if (!data.topTracks.isEmpty()) {
+            poster.addView(WrappedStory.space(context, 14));
+            poster.addView(dataLabel(context, "Top songs"));
+            for (int i = 0; i < Math.min(3, data.topTracks.size()); i++) {
+                poster.addView(posterRow(context, String.valueOf(i + 1),
+                        data.topTracks.get(i).title));
+            }
+        }
+
+        body.addView(WrappedStory.space(context, 16));
+
+        TextView share = WrappedStory.text(context, "Copy summary", 15, 0xFFFFFFFF,
+                Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        share.setGravity(Gravity.CENTER);
+        share.setPadding(dp(context, 24), dp(context, 12), dp(context, 24), dp(context, 12));
+        share.setBackground(WrappedStory.frost(context, 24));
+        share.setOnClickListener(view -> {
+            try {
+                ClipboardManager clipboard = (ClipboardManager)
+                        context.getSystemService(Context.CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Wrapped", summary(data)));
+                    Toast.makeText(context, "Summary copied", Toast.LENGTH_SHORT).show();
+                }
+            } catch (Throwable ignored) {
+            }
+        });
+        body.addView(share);
+
+        bottomCopy(root, context, "That's your year in music.");
+
+        startDrift(root);
+        setEntry(root, () -> WrappedStory.reveal(poster));
+        return root;
+    }
+
+    private static LinearLayout figure(Context context, String label, String value) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+
+        row.addView(dataLabel(context, label), new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView number = WrappedStory.text(context, value, 26, 0xFFFFFFFF,
+                Typeface.create("sans-serif", Typeface.BOLD));
+        number.setLetterSpacing(-0.01f);
+        row.addView(number);
+
         return row;
     }
 
-    private static LinearLayout.LayoutParams weight() {
-        return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+    private static LinearLayout posterRow(Context context, String rank, String value) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(context, 5), 0, dp(context, 5));
+
+        TextView index = WrappedStory.text(context, rank, 13, 0x66FFFFFF,
+                Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        row.addView(index, new LinearLayout.LayoutParams(dp(context, 22),
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView name = WrappedStory.text(context, value, 16, 0xFFFFFFFF,
+                Typeface.create("sans-serif", Typeface.NORMAL));
+        name.setMaxLines(1);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(name, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        return row;
+    }
+
+    private static String summary(WrappedReport.Data data) {
+        StringBuilder text = new StringBuilder();
+        text.append("My year in music\n");
+        text.append(WrappedStory.group(data.totalMs / 60_000)).append(" minutes\n");
+        text.append(WrappedStory.group(data.plays)).append(" songs\n");
+        text.append(WrappedStory.group(data.artists)).append(" artists\n");
+        for (WrappedReport.Artist artist : data.topArtists) {
+            text.append("• ").append(artist.name).append('\n');
+        }
+        for (WrappedReport.Track track : data.topTracks) {
+            text.append("• ").append(track.title).append('\n');
+        }
+        return text.toString();
+    }
+
+    private static String monthLabel(String month) {
+        try {
+            String[] parts = month.split("-");
+            String[] names = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+            int index = Integer.parseInt(parts[1]) - 1;
+            if (index < 0 || index > 11) return month;
+            return names[index] + " " + parts[0];
+        } catch (Exception ex) {
+            return month;
+        }
     }
 }

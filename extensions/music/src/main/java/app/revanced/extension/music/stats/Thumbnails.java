@@ -38,6 +38,11 @@ final class Thumbnails {
 
     /** Shows the artwork for {@code url} in {@code view}, if there is one. */
     static void load(ImageView view, String url) {
+        load(view, url, null);
+    }
+
+    /** Loads artwork and hands the bitmap to the callback as well. */
+    static void load(ImageView view, String url, Callback callback) {
         if (url == null || url.isEmpty()) return;
         if (url.contains("//1000x1000") || url.endsWith("/")) return; // malformed
 
@@ -46,6 +51,7 @@ final class Thumbnails {
         Bitmap cached = MEMORY.get(url);
         if (cached != null) {
             view.setImageBitmap(cached);
+            if (callback != null) callback.onBitmap(cached);
             return;
         }
 
@@ -68,8 +74,13 @@ final class Thumbnails {
                 if (targetView.getTag() != null && target.equals(targetView.getTag())) {
                     targetView.setImageBitmap(result);
                 }
+                if (callback != null) callback.onBitmap(result);
             });
         });
+    }
+
+    interface Callback {
+        void onBitmap(Bitmap bitmap);
     }
 
     private static Bitmap download(String url) {

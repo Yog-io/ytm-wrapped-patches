@@ -70,6 +70,17 @@ public final class WrappedReport {
         public long topTrackPlays;
         /** Plays summed across the ranked track list. */
         public long topListensPlays;
+        /** Month labels ("2026-03") and the top artist of each, oldest first. */
+        public final List<String> monthlyArtists = new ArrayList<>();
+        public final List<String> monthlyArtistNames = new ArrayList<>();
+        /** How many of those months the overall top artist led. */
+        public int topArtistMonths;
+        /** Artists heard for the first time in the last year. */
+        public int newArtistsThisYear;
+        /** The newest of those artists, with their artwork when it is known. */
+        public final List<Artist> newArtists = new ArrayList<>();
+        /** Artists that came back after a long silence. */
+        public final List<String> comebacks = new ArrayList<>();
         /** Listening personality derived from the peak hour. */
         public String archetype = "";
         /** Supporting line for {@link #archetype}. */
@@ -168,6 +179,44 @@ public final class WrappedReport {
         if (data.activeDays > 0) data.perDayMs = data.totalMs / data.activeDays;
         if (!data.topTracks.isEmpty()) data.topTrackPlays = data.topTracks.get(0).plays;
         for (Track track : data.topTracks) data.topListensPlays += track.plays;
+
+        // Month by month: who led each month, and how long the top artist led.
+        String previousMonth = null;
+        String monthArtist = null;
+        try (Cursor c = db.topArtistPerMonth()) {
+            while (c.moveToNext()) {
+                String month = c.getString(0);
+                String artist = c.getString(1);
+                if (month == null || artist == null) continue;
+                if (!month.equals(previousMonth)) {
+                    if (monthArtist != null) {
+                        data.monthlyArtists.add(previousMonth);
+                        data.monthlyArtistNames.add(monthArtist);
+                    }
+                    previousMonth = month;
+                    monthArtist = artist;
+                }
+            }
+            if (monthArtist != null && previousMonth != null) {
+                data.monthlyArtists.add(previousMonth);
+                data.monthlyArtistNames.add(monthArtist);
+            }
+        }
+
+        if (!data.topArtists.isEmpty()) {
+            String top = data.topArtists.get(0).name;
+            for (String artist : data.monthlyArtistNames) {
+                if (artist.equals(top)) data.topArtistMonths++;
+            }
+        }
+        data.newArtistsThisYear = db.distinctArtistsFirstSeenSince(
+                System.currentTimeMillis() - 365L * 24 * 60 * 60 * 1000);
+
+        for (String artist : db.newArtistsSince(
+                System.currentTimeMillis() - 365L * 24 * 60 * 60 * 1000, 8)) {
+            data.newArtists.add(new Artist(artist, 0, db.artistArtwork(artist)));
+        }
+        data.comebacks.addAll(db.comebackArtists());
 
         // Listening personality, derived from the hour the user listens most.
         int hour = data.peakHour;

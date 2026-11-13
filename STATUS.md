@@ -267,3 +267,38 @@ Artwork: hooked MediaSession.setQueue - every queue item carries the real cover
 bitmap. The support-library fields are obfuscated, so the bitmap is paired to the
 track by matching the item's text against the tracks we already know. Artwork is
 written to the app cache and its path stored in the DB (no network).
+
+## Session 11 - Apple Music Replay rebuild
+
+Rebuilt the whole report against Apple Music Replay's actual design, using the
+Gemini research as the spec and Apple's own replay web bundle for the internals
+(artwork-sampled colours, heavy blur, display type, animated rings).
+
+**Flow (7 cards, tap-to-page, swipe disabled like Apple):**
+1. Total minutes - hero cover, count-up number, artwork-sampled mesh.
+2. Month by month - top artist of every month in frosted rows.
+3. Top artist - hero cover, loyalty line.
+4. Top song - cover, title, artist, play count-up.
+5. New to you - count-up of new artists, real covers of the newest ones.
+6. Your rhythm - peak hour, longest streak.
+7. Poster - one frosted "receipt" card with minutes/songs/artists/top 5s and a
+   copy-to-clipboard share.
+
+**Motion:** tap-only paging, 0.5s mesh cross-fade, artwork springs in from 0.8x,
+continuous Ken Burns drift, numbers count up over 1.5s with a hard landing, haptic
+tick on page change and on the end of a count-up.
+
+**Materials:** flat frost glass - one even translucent sheet with a hairline edge,
+no highlight or bulge. Background is a moving mesh gradient built from the
+colours sampled out of the artwork itself (`Palette` + `MeshBackdrop`).
+
+**Data:** monthly top artist, artists first heard this year, artists that came
+back after a long silence, all queried from the local database.
+
+**Cleanup:** the seeded demo rows were removed from the emulator database, so the
+report only reflects real listening (127 minutes, 56 songs, 31 artists).
+
+**Artwork:** catalogue fallback extended with iTunes album entries and MusicBrainz
+recordings; the hero cover now prefers a track that actually has artwork; missing
+covers are a dim glass tile with a monogram instead of a flat colour block.
+

@@ -74,6 +74,8 @@ final class ArtworkResolver {
                 } else {
                     url = itunesTrack(artist, title);
                     if (url == null) url = deezerTrack(artist, title);
+                    if (url == null) url = itunesAlbum(artist, title);
+                    if (url == null) url = musicBrainzTrack(artist, title);
                 }
             } catch (Exception ex) {
                 Logger.printInfo(() -> "Artwork lookup failed: " + ex.getMessage());
@@ -103,6 +105,25 @@ final class ArtworkResolver {
         for (int i = 0; i < results.length(); i++) {
             JSONObject item = results.getJSONObject(i);
             if (!titleMatches(item.optString("trackName", ""), title)) continue;
+            if (!artistMatches(item.optString("artistName", ""), artist)) continue;
+            String artwork = item.optString("artworkUrl100", "");
+            if (!artwork.isEmpty()) return artwork.replace("100x100", "600x600");
+        }
+        return null;
+    }
+
+    /**
+     * Some tracks only exist as the title of a single. The album entry then holds
+     * the very same cover.
+     */
+    private static String itunesAlbum(String artist, String title) throws JSONException {
+        JSONArray results = search("https://itunes.apple.com/search?term="
+                + encode((artist == null ? "" : artist + " ") + (title == null ? "" : title))
+                + "&entity=album&limit=25");
+        if (results == null) return null;
+        for (int i = 0; i < results.length(); i++) {
+            JSONObject item = results.getJSONObject(i);
+            if (!titleMatches(item.optString("collectionName", ""), title)) continue;
             if (!artistMatches(item.optString("artistName", ""), artist)) continue;
             String artwork = item.optString("artworkUrl100", "");
             if (!artwork.isEmpty()) return artwork.replace("100x100", "600x600");
@@ -182,6 +203,31 @@ final class ArtworkResolver {
             if (!artistMatches(item.optString("name", ""), artist)) continue;
             String id = item.optString("id", "");
             if (!id.isEmpty()) return "https://coverartarchive.org/artist/" + id + "/front-500";
+        }
+        return null;
+    }
+
+    /** A recording's release carries the cover of the song itself. */
+    private static String musicBrainzTrack(String artist, String title) throws JSONException {
+        JSONObject json = getJson("https://musicbrainz.org/ws/2/recording?query="
+                + encode((title == null ? "" : title) + " AND "
+                + (artist == null ? "" : artist))
+                + "&fmt=json&limit=15");
+        if (json == null) return null;
+        JSONArray recordings = json.optJSONArray("recordings");
+        if (recordings == null) return null;
+        for (int i = 0; i < recordings.length(); i++) {
+            JSONObject item = recordings.getJSONObject(i);
+            if (!titleMatches(item.optString("title", ""), title)) continue;
+            JSONArray releases = item.optJSONArray("releases");
+            if (releases == null) continue;
+            for (int j = 0; j < releases.length(); j++) {
+                JSONObject release = releases.getJSONObject(j);
+                String id = release.optString("id", "");
+                if (!id.isEmpty()) {
+                    return "https://coverartarchive.org/release/" + id + "/front-500";
+                }
+            }
         }
         return null;
     }

@@ -329,6 +329,74 @@ public final class ListeningDatabase {
         return v;
     }
 
+    /**
+     * Top artist per month, most recent last. Columns: month (yyyy-mm), artist,
+     * plays.
+     */
+    public Cursor topArtistPerMonth() {
+        return db().rawQuery(
+                "SELECT strftime('%Y-%m', s.start_ms/1000, 'unixepoch') AS month, " +
+                        "t.artist AS artist, COUNT(*) AS plays " +
+                        "FROM sessions s JOIN tracks t ON t.id = s.track_id " +
+                        "WHERE t.artist != '' " +
+                        "GROUP BY month, t.artist ORDER BY month ASC, plays DESC",
+                null);
+    }
+
+    /** Artists first heard in the given period. */
+    public int distinctArtistsFirstSeenSince(long sinceMs) {
+        Cursor c = db().rawQuery(
+                "SELECT COUNT(DISTINCT artist) FROM tracks WHERE artist != '' " +
+                        "AND first_seen_ms >= ?", new String[]{String.valueOf(sinceMs)});
+        int v = 0;
+        if (c.moveToFirst()) v = c.getInt(0);
+        c.close();
+        return v;
+    }
+
+    /** Artists heard for the first time since the given moment, newest first. */
+    public java.util.List<String> newArtistsSince(long sinceMs, int limit) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        Cursor c = db().rawQuery(
+                "SELECT artist FROM tracks WHERE artist != '' AND first_seen_ms >= ? " +
+                        "GROUP BY artist ORDER BY MIN(first_seen_ms) DESC LIMIT ?",
+                new String[]{String.valueOf(sinceMs), String.valueOf(limit)});
+        while (c.moveToNext()) names.add(c.getString(0));
+        c.close();
+        return names;
+    }
+
+    /**
+     * Artists played in the last 30 days that were silent for a long while before.
+     * The "comebacks" of the year.
+     */
+    public java.util.List<String> comebackArtists() {
+        long now = System.currentTimeMillis();
+        long recent = now - 30L * 24 * 60 * 60 * 1000;
+        long silence = 90L * 24 * 60 * 60 * 1000;
+
+        java.util.List<String> candidates = new java.util.ArrayList<>();
+        Cursor c = db().rawQuery(
+                "SELECT t.artist FROM sessions s JOIN tracks t ON t.id = s.track_id " +
+                        "WHERE t.artist != '' GROUP BY t.artist HAVING MAX(s.start_ms) >= ?",
+                new String[]{String.valueOf(recent)});
+        while (c.moveToNext()) candidates.add(c.getString(0));
+        c.close();
+
+        java.util.List<String> result = new java.util.ArrayList<>();
+        for (String artist : candidates) {
+            Cursor p = db().rawQuery(
+                    "SELECT MAX(s.start_ms) FROM sessions s JOIN tracks t ON t.id = s.track_id " +
+                            "WHERE t.artist = ? AND s.start_ms < ?",
+                    new String[]{artist, String.valueOf(recent)});
+            long previous = 0;
+            if (p.moveToFirst() && !p.isNull(0)) previous = p.getLong(0);
+            p.close();
+            if (previous > 0 && recent - previous > silence) result.add(artist);
+        }
+        return result;
+    }
+
     /** Most listened track by a given artist, or null. Columns: title, total_listened_ms. */
     public Cursor bestTrackForArtist(String artist) {
         return db().query("tracks", new String[]{"title", "total_listened_ms"},
