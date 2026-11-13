@@ -197,3 +197,18 @@ Manager JsonSource ReVancedAsset schema verified from Manager source).
   220 active days; top tracks + artists matched SQL exactly; hour/day charts rendered.
 - Empty-DB path verified ("Nothing here yet"; app recreates schema with user_version=1).
 - Known minor: late-arriving DURATION isn't backfilled on the enrich path (duration 0 -> hidden).
+
+## SESSION 6 — NATIVE WRAPPED SCREEN (Nov 13)
+- Replaced the AlertDialog + WebView with a dedicated manifest-registered Activity
+  (WrappedReportActivity) in the extension, launched from the settings preference.
+- Native app bar: drawn back arrow (no libraries/resources) + "Music Wrapped" title,
+  dark Material theme, white system-bar icons. Report content is 100% native views:
+  gradient total card, stats card, top tracks/artists rows, hour chart (view heights),
+  weekday bars (weighted views), footer. No HTML/WebView anywhere.
+- Verified on emulator through the real UI path (Account > Settings > ReVanced > Misc >
+  Music Wrapped): numbers match DB, scroll works, back arrow returns to Misc,
+  empty state ("Nothing here yet") works, zero crashes.
+- Emulator env: DNS broke after reboot -> cold boot with -dns-server 8.8.8.8,8.8.4.4
+  (failed sign-in was actually dead DNS, not microG).
+- Note: adb install -r fails across patch runs (CLI re-signs each time with a new key)
+  -> uninstall + install, then re-push the DB.

@@ -1,15 +1,15 @@
 package app.revanced.extension.music.settings.preference;
 
-import static app.revanced.extension.music.stats.WrappedReport.showReport;
-
 import android.content.Context;
+import android.content.Intent;
 import android.preference.Preference;
 import android.util.AttributeSet;
 
 import app.revanced.extension.shared.Logger;
+import app.revanced.extension.music.stats.WrappedReportActivity;
 
 /**
- * Settings preference that opens the local Music Wrapped report.
+ * Settings preference that opens the local Music Wrapped report screen.
  */
 @SuppressWarnings("unused")
 public class WrappedReportPreference extends Preference implements Preference.OnPreferenceClickListener {
@@ -43,9 +43,10 @@ public class WrappedReportPreference extends Preference implements Preference.On
     @Override
     public boolean onPreferenceClick(Preference preference) {
         try {
-            showReport(getContext());
+            Context context = getContext();
+            context.startActivity(new Intent(context, WrappedReportActivity.class));
         } catch (Exception ex) {
-            Logger.printException(() -> "WrappedReport show failure", ex);
+            Logger.printException(() -> "WrappedReport launch failure", ex);
         }
         return true;
     }

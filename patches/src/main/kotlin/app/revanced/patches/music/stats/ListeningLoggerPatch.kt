@@ -5,6 +5,7 @@ import app.revanced.patcher.extensions.getInstruction
 import app.revanced.patcher.extensions.instructions
 import app.revanced.patcher.patch.PatchException
 import app.revanced.patcher.patch.bytecodePatch
+import app.revanced.patcher.patch.resourcePatch
 import app.revanced.patches.all.misc.resources.addResources
 import app.revanced.patches.all.misc.resources.addResourcesPatch
 import app.revanced.patches.music.misc.extension.sharedExtensionPatch
@@ -12,6 +13,8 @@ import app.revanced.patches.music.misc.settings.PreferenceScreen
 import app.revanced.patches.music.misc.settings.settingsPatch
 import app.revanced.patches.shared.misc.settings.preference.SwitchPreference
 import app.revanced.patches.shared.misc.settings.preference.TextPreference
+import app.revanced.util.asSequence
+import app.revanced.util.getNode
 import app.revanced.util.getReference
 import app.revanced.util.indexOfFirstInstructionOrThrow
 import com.android.tools.smali.dexlib2.Opcode
@@ -26,12 +29,42 @@ private const val EXTENSION_CLASS_DESCRIPTOR =
 
 private const val METADATA_BUNDLE_TYPE = "Landroid/os/Bundle;"
 
+private const val WRAPPED_ACTIVITY_CLASS =
+    "app.revanced.extension.music.stats.WrappedReportActivity"
+
+/**
+ * Registers the full-screen Wrapped report activity in the manifest.
+ */
+private val wrappedReportActivityPatch = resourcePatch(
+    description = "Registers the Music Wrapped report screen.",
+) {
+    apply {
+        document("AndroidManifest.xml").use { document ->
+            val alreadyRegistered = document.getElementsByTagName("activity").asSequence()
+                .any { it.attributes.getNamedItem("android:name")?.nodeValue == WRAPPED_ACTIVITY_CLASS }
+            if (alreadyRegistered) return@apply
+
+            with(document.getNode("application")) {
+                document.createElement("activity").apply {
+                    setAttribute("android:name", WRAPPED_ACTIVITY_CLASS)
+                    setAttribute("android:exported", "false")
+                    setAttribute("android:theme", "@android:style/Theme.Material.NoActionBar")
+                    setAttribute(
+                        "android:configChanges",
+                        "orientation|screenSize|screenLayout|keyboardHidden",
+                    )
+                }.let(this::appendChild)
+            }
+        }
+    }
+}
+
 @Suppress("unused")
 val listeningLoggerPatch = bytecodePatch(
     name = "Listening stats logger",
     description = "Records listening history (track, artist, duration, timestamps) to a local database for the Wrapped report.",
 ) {
-    dependsOn(sharedExtensionPatch, settingsPatch, addResourcesPatch)
+    dependsOn(sharedExtensionPatch, settingsPatch, addResourcesPatch, wrappedReportActivityPatch)
 
     compatibleWith(
         "com.google.android.apps.youtube.music"(
